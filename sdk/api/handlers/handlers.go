@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	internalfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/files"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/thinking"
@@ -261,6 +262,9 @@ type BaseAPIHandler struct {
 
 	// Cfg holds the current application configuration.
 	Cfg *config.SDKConfig
+
+	// UploadedFileStore resolves OpenAI-style file ids into locally persisted uploads.
+	UploadedFileStore *internalfiles.Store
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.

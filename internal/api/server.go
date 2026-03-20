@@ -26,6 +26,7 @@ import (
 	ampmodule "github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules/amp"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	internalfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/files"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
@@ -253,6 +254,11 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		envManagementSecret: envManagementSecret,
 		wsRoutes:            make(map[string]struct{}),
 	}
+	if uploadStore, errUploadStore := newUploadedFileStore(cfg.AuthDir); errUploadStore != nil {
+		log.Warnf("Failed to initialize uploaded file store: %v", errUploadStore)
+	} else {
+		s.handlers.UploadedFileStore = uploadStore
+	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	// Save initial YAML snapshot
 	s.oldConfigYaml, _ = yaml.Marshal(cfg)
@@ -336,12 +342,16 @@ func (s *Server) setupRoutes() {
 	geminiCLIHandlers := gemini.NewGeminiCLIAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
+	openaiFilesHandlers := openai.NewOpenAIFilesAPIHandler(s.handlers)
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
 	v1.Use(AuthMiddleware(s.accessManager))
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
+		v1.POST("/files", openaiFilesHandlers.Create)
+		v1.GET("/files/:id", openaiFilesHandlers.Get)
+		v1.DELETE("/files/:id", openaiFilesHandlers.Delete)
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
 		v1.POST("/completions", openaiHandlers.Completions)
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
@@ -433,6 +443,26 @@ func (s *Server) setupRoutes() {
 	})
 
 	// Management routes are registered lazily by registerManagementRoutes when a secret is configured.
+}
+
+func newUploadedFileStore(authDir string) (*internalfiles.Store, error) {
+	resolvedAuthDir, err := util.ResolveAuthDir(authDir)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(resolvedAuthDir) == "" {
+		homeDir, errHome := os.UserHomeDir()
+		if errHome != nil {
+			return nil, fmt.Errorf("resolve uploaded file store directory: %w", errHome)
+		}
+		resolvedAuthDir = filepath.Join(homeDir, ".cli-proxy-api")
+	}
+
+	store := internalfiles.NewStore(filepath.Join(resolvedAuthDir, "uploaded-files"))
+	if err = store.CleanupExpired(); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 // AttachWebsocketRoute registers a websocket upgrade handler on the primary Gin engine.
