@@ -94,6 +94,17 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 							contentPart := `{"type":"image_url","image_url":{"url":""}}`
 							contentPart, _ = sjson.Set(contentPart, "image_url.url", imageURL)
 							message, _ = sjson.SetRaw(message, "content.-1", contentPart)
+						case "input_file":
+							fileData := contentItem.Get("file_data").String()
+							if fileData == "" {
+								break
+							}
+							contentPart := `{"type":"file","file":{"file_data":"","filename":""}}`
+							contentPart, _ = sjson.Set(contentPart, "file.file_data", fileData)
+							if filename := contentItem.Get("filename").String(); filename != "" {
+								contentPart, _ = sjson.Set(contentPart, "file.filename", filename)
+							}
+							message, _ = sjson.SetRaw(message, "content.-1", contentPart)
 						}
 						return true
 					})

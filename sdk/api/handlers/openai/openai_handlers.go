@@ -112,18 +112,31 @@ func (h *OpenAIAPIHandler) ChatCompletions(c *gin.Context) {
 	streamResult := gjson.GetBytes(rawJSON, "stream")
 	stream := streamResult.Type == gjson.True
 
+	usedFileIDs := []string(nil)
+
 	// Some clients send OpenAI Responses-format payloads to /v1/chat/completions.
 	// Convert them to Chat Completions so downstream translators preserve tool metadata.
 	if shouldTreatAsResponsesFormat(rawJSON) {
+		rawJSON, usedFileIDs, err = expandResponsesFileReferences(rawJSON, h.UploadedFileStore)
+		if err != nil {
+			writeOpenAIFileReferenceError(c, err)
+			return
+		}
 		modelName := gjson.GetBytes(rawJSON, "model").String()
 		rawJSON = responsesconverter.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName, rawJSON, stream)
 		stream = gjson.GetBytes(rawJSON, "stream").Bool()
+	} else {
+		rawJSON, usedFileIDs, err = expandChatCompletionsFileReferences(rawJSON, h.UploadedFileStore)
+		if err != nil {
+			writeOpenAIFileReferenceError(c, err)
+			return
+		}
 	}
 
 	if stream {
-		h.handleStreamingResponse(c, rawJSON)
+		h.handleStreamingResponse(c, rawJSON, usedFileIDs)
 	} else {
-		h.handleNonStreamingResponse(c, rawJSON)
+		h.handleNonStreamingResponse(c, rawJSON, usedFileIDs)
 	}
 
 }
@@ -426,7 +439,7 @@ func convertChatCompletionsStreamChunkToCompletions(chunkData []byte) []byte {
 // Parameters:
 //   - c: The Gin context containing the HTTP request and response
 //   - rawJSON: The raw JSON bytes of the OpenAI-compatible request
-func (h *OpenAIAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []byte) {
+func (h *OpenAIAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []byte, usedFileIDs []string) {
 	c.Header("Content-Type", "application/json")
 
 	modelName := gjson.GetBytes(rawJSON, "model").String()
@@ -437,6 +450,7 @@ func (h *OpenAIAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []
 		cliCancel(errMsg.Error)
 		return
 	}
+	cleanupUploadedFilesAfterSuccess(h.UploadedFileStore, usedFileIDs)
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 	_, _ = c.Writer.Write(resp)
 	cliCancel()
@@ -449,7 +463,7 @@ func (h *OpenAIAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []
 // Parameters:
 //   - c: The Gin context containing the HTTP request and response
 //   - rawJSON: The raw JSON bytes of the OpenAI-compatible request
-func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byte) {
+func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byte, usedFileIDs []string) {
 	// Get the http.Flusher interface to manually flush the response.
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -466,6 +480,13 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, h.GetAlt(c))
 
+	finishStream := func(err error) {
+		if err == nil {
+			cleanupUploadedFilesAfterSuccess(h.UploadedFileStore, usedFileIDs)
+		}
+		cliCancel(err)
+	}
+
 	setSSEHeaders := func() {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
@@ -477,7 +498,7 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 	for {
 		select {
 		case <-c.Request.Context().Done():
-			cliCancel(c.Request.Context().Err())
+			finishStream(c.Request.Context().Err())
 			return
 		case errMsg, ok := <-errChan:
 			if !ok {
@@ -488,9 +509,9 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 			// Upstream failed immediately. Return proper error status and JSON.
 			h.WriteErrorResponse(c, errMsg)
 			if errMsg != nil {
-				cliCancel(errMsg.Error)
+				finishStream(errMsg.Error)
 			} else {
-				cliCancel(nil)
+				finishStream(nil)
 			}
 			return
 		case chunk, ok := <-dataChan:
@@ -500,7 +521,7 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 				handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 				_, _ = fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
 				flusher.Flush()
-				cliCancel(nil)
+				finishStream(nil)
 				return
 			}
 
@@ -512,7 +533,7 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 			flusher.Flush()
 
 			// Continue streaming the rest
-			h.handleStreamResult(c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan)
+			h.handleStreamResult(c, flusher, finishStream, dataChan, errChan)
 			return
 		}
 	}
