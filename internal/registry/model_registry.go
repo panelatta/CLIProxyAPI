@@ -1117,6 +1117,11 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) 
 			"object":   "model",
 			"owned_by": model.OwnedBy,
 		}
+		if model.DisplayName != "" {
+			result["name"] = model.DisplayName
+		} else if model.ID != "" {
+			result["name"] = model.ID
+		}
 		if model.Created > 0 {
 			result["created"] = model.Created
 		}
@@ -1140,6 +1145,18 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) 
 		}
 		if len(model.SupportedParameters) > 0 {
 			result["supported_parameters"] = append([]string(nil), model.SupportedParameters...)
+		}
+		if len(model.SupportedInputModalities) > 0 {
+			result["supportedInputModalities"] = append([]string(nil), model.SupportedInputModalities...)
+		}
+		if len(model.SupportedOutputModalities) > 0 {
+			result["supportedOutputModalities"] = append([]string(nil), model.SupportedOutputModalities...)
+		}
+		if thinking := thinkingSupportToMap(model.Thinking); thinking != nil {
+			result["thinking"] = thinking
+		}
+		if info := buildOpenAIModelInfo(model); info != nil {
+			result["info"] = info
 		}
 		return result
 
@@ -1210,6 +1227,142 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) 
 		}
 		return result
 	}
+}
+
+func buildOpenAIModelInfo(model *ModelInfo) map[string]any {
+	if model == nil {
+		return nil
+	}
+
+	meta := map[string]any{}
+	if model.DisplayName != "" {
+		meta["display_name"] = model.DisplayName
+	}
+	if model.Description != "" {
+		meta["description"] = model.Description
+	}
+	if model.Version != "" {
+		meta["version"] = model.Version
+	}
+	if model.Type != "" {
+		meta["provider"] = model.Type
+	}
+	if model.ContextLength > 0 {
+		meta["context_length"] = model.ContextLength
+	}
+	if model.MaxCompletionTokens > 0 {
+		meta["max_completion_tokens"] = model.MaxCompletionTokens
+	}
+	if len(model.SupportedParameters) > 0 {
+		meta["supported_parameters"] = append([]string(nil), model.SupportedParameters...)
+	}
+	if len(model.SupportedInputModalities) > 0 {
+		meta["supportedInputModalities"] = append([]string(nil), model.SupportedInputModalities...)
+	}
+	if len(model.SupportedOutputModalities) > 0 {
+		meta["supportedOutputModalities"] = append([]string(nil), model.SupportedOutputModalities...)
+	}
+	if thinking := thinkingSupportToMap(model.Thinking); thinking != nil {
+		meta["thinking"] = thinking
+	}
+	if capabilities := buildOpenAIModelCapabilities(model); len(capabilities) > 0 {
+		meta["capabilities"] = capabilities
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"meta": meta,
+	}
+}
+
+func buildOpenAIModelCapabilities(model *ModelInfo) map[string]any {
+	if model == nil {
+		return nil
+	}
+
+	capabilities := map[string]any{}
+	if hasSupportedParameter(model, "tools") {
+		capabilities["builtin_tools"] = true
+	}
+	if model.Thinking != nil {
+		capabilities["reasoning"] = true
+	}
+	if supportsInputModality(model, "image") || supportsOutputModality(model, "image") {
+		capabilities["vision"] = true
+		capabilities["file_upload"] = true
+	}
+	if supportsOutputModality(model, "image") {
+		capabilities["image_generation"] = true
+	}
+	if len(capabilities) == 0 {
+		return nil
+	}
+	return capabilities
+}
+
+func thinkingSupportToMap(thinking *ThinkingSupport) map[string]any {
+	if thinking == nil {
+		return nil
+	}
+
+	result := map[string]any{}
+	if thinking.Min > 0 {
+		result["min"] = thinking.Min
+	}
+	if thinking.Max > 0 {
+		result["max"] = thinking.Max
+	}
+	if thinking.ZeroAllowed {
+		result["zero_allowed"] = true
+	}
+	if thinking.DynamicAllowed {
+		result["dynamic_allowed"] = true
+	}
+	if len(thinking.Levels) > 0 {
+		result["levels"] = append([]string(nil), thinking.Levels...)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func hasSupportedParameter(model *ModelInfo, name string) bool {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if model == nil || name == "" || len(model.SupportedParameters) == 0 {
+		return false
+	}
+
+	for _, param := range model.SupportedParameters {
+		if strings.EqualFold(strings.TrimSpace(param), name) {
+			return true
+		}
+	}
+	return false
+}
+
+func supportsInputModality(model *ModelInfo, modality string) bool {
+	return supportsModality(model.SupportedInputModalities, modality)
+}
+
+func supportsOutputModality(model *ModelInfo, modality string) bool {
+	return supportsModality(model.SupportedOutputModalities, modality)
+}
+
+func supportsModality(values []string, target string) bool {
+	target = strings.TrimSpace(strings.ToLower(target))
+	if target == "" || len(values) == 0 {
+		return false
+	}
+
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }
 
 // CleanupExpiredQuotas removes expired quota tracking entries
