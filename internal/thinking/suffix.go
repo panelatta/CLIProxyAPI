@@ -1,7 +1,8 @@
 // Package thinking provides unified thinking configuration processing.
 //
 // This file implements suffix parsing functionality for extracting
-// thinking configuration from model names in the format model(value).
+// thinking configuration from model names in the format model(value),
+// model@value, or model#value.
 package thinking
 
 import (
@@ -11,36 +12,58 @@ import (
 
 // ParseSuffix extracts thinking suffix from a model name.
 //
-// The suffix format is: model-name(value)
+// The supported suffix formats are:
+//   - model-name(value)
+//   - model-name@value
+//   - model-name#value
+//
 // Examples:
 //   - "claude-sonnet-4-5(16384)" -> ModelName="claude-sonnet-4-5", RawSuffix="16384"
 //   - "gpt-5.2(high)" -> ModelName="gpt-5.2", RawSuffix="high"
+//   - "gpt-5.4@low" -> ModelName="gpt-5.4", RawSuffix="low"
+//   - "gpt-5.4#low" -> ModelName="gpt-5.4", RawSuffix="low"
 //   - "gemini-2.5-pro" -> ModelName="gemini-2.5-pro", HasSuffix=false
 //
 // This function only extracts the suffix; it does not validate or interpret
 // the suffix content. Use ParseNumericSuffix, ParseLevelSuffix, etc. for
 // content interpretation.
 func ParseSuffix(model string) SuffixResult {
-	// Find the last opening parenthesis
+	if result, ok := parseParenthesizedSuffix(model); ok {
+		return result
+	}
+	if result, ok := parseDelimitedSuffix(model); ok {
+		return result
+	}
+	return SuffixResult{ModelName: model, HasSuffix: false}
+}
+
+func parseParenthesizedSuffix(model string) (SuffixResult, bool) {
 	lastOpen := strings.LastIndex(model, "(")
-	if lastOpen == -1 {
-		return SuffixResult{ModelName: model, HasSuffix: false}
+	if lastOpen == -1 || !strings.HasSuffix(model, ")") {
+		return SuffixResult{}, false
 	}
-
-	// Check if the string ends with a closing parenthesis
-	if !strings.HasSuffix(model, ")") {
-		return SuffixResult{ModelName: model, HasSuffix: false}
-	}
-
-	// Extract components
-	modelName := model[:lastOpen]
-	rawSuffix := model[lastOpen+1 : len(model)-1]
-
 	return SuffixResult{
-		ModelName: modelName,
+		ModelName: model[:lastOpen],
 		HasSuffix: true,
-		RawSuffix: rawSuffix,
+		RawSuffix: model[lastOpen+1 : len(model)-1],
+	}, true
+}
+
+func parseDelimitedSuffix(model string) (SuffixResult, bool) {
+	lastAt := strings.LastIndex(model, "@")
+	lastHash := strings.LastIndex(model, "#")
+	lastSep := lastAt
+	if lastHash > lastSep {
+		lastSep = lastHash
 	}
+	if lastSep <= 0 || lastSep == len(model)-1 {
+		return SuffixResult{}, false
+	}
+	return SuffixResult{
+		ModelName: model[:lastSep],
+		HasSuffix: true,
+		RawSuffix: model[lastSep+1:],
+	}, true
 }
 
 // ParseNumericSuffix attempts to parse a raw suffix as a numeric budget value.
