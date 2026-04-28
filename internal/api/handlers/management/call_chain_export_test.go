@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -290,5 +291,137 @@ Status: 200
 	}
 	if payload.SessionCount != 1 || payload.Sessions[0].ID != "sess-123" {
 		t.Fatalf("unexpected sessions: %+v", payload.Sessions)
+	}
+}
+
+func TestExportRequestCallChainFiltersDerivedSessionIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logDir := t.TempDir()
+
+	firstLog := `=== REQUEST INFO ===
+URL: /v1/responses
+Method: POST
+Timestamp: 2026-04-26T12:00:00Z
+
+=== REQUEST BODY ===
+{"model":"gpt-test","input":"hello"}
+
+=== RESPONSE ===
+Status: 200
+Content-Type: application/json
+
+{"id":"resp_1","model":"gpt-test","output_text":"ok"}
+`
+	secondLog := `=== REQUEST INFO ===
+URL: /v1/responses
+Method: POST
+Timestamp: 2026-04-26T12:01:00Z
+
+=== REQUEST BODY ===
+{"model":"gpt-test","previous_response_id":"resp_1","input":"continue"}
+
+=== RESPONSE ===
+Status: 200
+Content-Type: application/json
+
+{"id":"resp_2","model":"gpt-test","output_text":"next"}
+`
+
+	if err := os.WriteFile(filepath.Join(logDir, "v1-responses-2026-04-26T120000-reqone.log"), []byte(firstLog), 0o644); err != nil {
+		t.Fatalf("write first log: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "v1-responses-2026-04-26T120100-reqtwo.log"), []byte(secondLog), 0o644); err != nil {
+		t.Fatalf("write second log: %v", err)
+	}
+
+	handler := NewHandlerWithoutConfigFilePath(&config.Config{
+		SDKConfig:     sdkconfig.SDKConfig{RequestLog: true},
+		LoggingToFile: true,
+	}, nil)
+	handler.SetLogDirectory(logDir)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v0/management/request-call-chain/export?session_id=response-chain%3Aresp_1&limit=10", nil)
+
+	handler.ExportRequestCallChain(ctx)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload callChainExportPayload
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.SessionCount != 1 || payload.Sessions[0].ID != "response-chain:resp_1" {
+		t.Fatalf("unexpected response-chain sessions: %+v", payload.Sessions)
+	}
+	if len(payload.Sessions[0].Requests) != 2 {
+		t.Fatalf("response-chain request count = %d, want 2", len(payload.Sessions[0].Requests))
+	}
+
+	rec = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v0/management/request-call-chain/export?session_id=request%3Areqtwo&limit=10", nil)
+
+	handler.ExportRequestCallChain(ctx)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	payload = callChainExportPayload{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode request-id payload: %v", err)
+	}
+	if payload.SessionCount != 1 || len(payload.Sessions[0].Requests) != 1 || payload.Sessions[0].Requests[0].RequestID != "reqtwo" {
+		t.Fatalf("unexpected request-id sessions: %+v", payload.Sessions)
+	}
+}
+
+func TestExportRequestCallChainQueryMatchesEscapedUnicode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logDir := t.TempDir()
+
+	logBody := `=== REQUEST INFO ===
+URL: /v1/responses
+Method: POST
+Timestamp: 2026-04-26T12:00:00Z
+
+=== REQUEST BODY ===
+{"model":"gpt-test","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"\u89d2\u8272\u63d0\u793a\u8bcd"}]}]}
+
+=== RESPONSE ===
+Status: 200
+Content-Type: application/json
+
+{"id":"resp_1","model":"gpt-test","output_text":"ok"}
+`
+	if err := os.WriteFile(filepath.Join(logDir, "v1-responses-2026-04-26T120000-unicode.log"), []byte(logBody), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	handler := NewHandlerWithoutConfigFilePath(&config.Config{
+		SDKConfig:     sdkconfig.SDKConfig{RequestLog: true},
+		LoggingToFile: true,
+	}, nil)
+	handler.SetLogDirectory(logDir)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v0/management/request-call-chain/export?q="+url.QueryEscape("角色提示词"), nil)
+
+	handler.ExportRequestCallChain(ctx)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload callChainExportPayload
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.RequestCount != 1 {
+		t.Fatalf("request count = %d, want 1", payload.RequestCount)
+	}
+	if got := payload.Sessions[0].Requests[0].UserInputs[0].Text; got != "角色提示词" {
+		t.Fatalf("decoded user input = %q, want 角色提示词", got)
 	}
 }
