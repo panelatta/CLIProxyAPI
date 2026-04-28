@@ -1,7 +1,6 @@
 package management
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -414,9 +413,6 @@ func matchesCallChainRawFilters(candidate requestLogCandidate, raw []byte, opts 
 	if opts.filters.RequestID != "" && !strings.Contains(candidate.name, "-"+opts.filters.RequestID+".log") {
 		return false
 	}
-	if opts.filters.Query != "" && !bytes.Contains(bytes.ToLower(raw), []byte(strings.ToLower(opts.filters.Query))) {
-		return false
-	}
 	if !opts.from.IsZero() && candidate.modTime.Before(opts.from) {
 		return false
 	}
@@ -439,10 +435,96 @@ func matchesCallChainParsedFilters(req callChainRequestExport, raw string, opts 
 	if !opts.to.IsZero() && !ts.IsZero() && ts.After(opts.to) {
 		return false
 	}
+	if opts.filters.Query != "" && !requestMatchesQuery(req, raw, opts.filters.Query) {
+		return false
+	}
 	if opts.filters.SessionID != "" && !requestMatchesSessionID(req, raw, opts.filters.SessionID) {
 		return false
 	}
 	return true
+}
+
+func requestMatchesQuery(req callChainRequestExport, raw string, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(raw), query) {
+		return true
+	}
+	for _, value := range callChainSearchValues(req) {
+		if strings.Contains(strings.ToLower(value), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func callChainSearchValues(req callChainRequestExport) []string {
+	values := []string{
+		req.RequestID,
+		req.File,
+		req.Timestamp,
+		req.URL,
+		req.Method,
+		req.Model,
+	}
+	for key, list := range req.Identifiers {
+		values = append(values, key)
+		values = append(values, list...)
+	}
+	appendEvents := func(events []callChainEvent) {
+		for _, event := range events {
+			values = append(values, event.Source, event.Path, event.Type, event.Role, event.Name, event.CallID, event.Text, event.Raw)
+		}
+	}
+	appendEvents(req.UserInputs)
+	appendEvents(req.ModelOutputs)
+	appendEvents(req.Reasoning)
+	appendEvents(req.ToolCalls)
+	appendEvents(req.ToolResults)
+
+	values = appendPayloadSearchText(values, req.HTTP.DownstreamRequest.Body)
+	values = appendPayloadSearchText(values, req.HTTP.DownstreamResponse.Body)
+	for _, upstream := range req.HTTP.UpstreamRequests {
+		values = append(values, upstream.URL, upstream.Method, upstream.Auth)
+		values = appendPayloadSearchText(values, upstream.Body)
+	}
+	for _, upstream := range req.HTTP.UpstreamResponses {
+		values = appendPayloadSearchText(values, upstream.Body)
+	}
+	for _, event := range req.HTTP.WebsocketTimeline {
+		values = append(values, event.Event)
+		values = appendPayloadSearchText(values, event.Payload)
+	}
+	for _, event := range req.HTTP.APIWebsocketTimeline {
+		values = append(values, event.Event)
+		values = appendPayloadSearchText(values, event.Payload)
+	}
+	for _, section := range req.RawSections {
+		values = append(values, section.Title, section.Content)
+	}
+	return values
+}
+
+func appendPayloadSearchText(values []string, payload string) []string {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return values
+	}
+	values = append(values, payload)
+	for _, candidate := range extractJSONPayloadsFromText(payload) {
+		var decoded any
+		decoder := json.NewDecoder(strings.NewReader(candidate))
+		decoder.UseNumber()
+		if err := decoder.Decode(&decoded); err != nil {
+			continue
+		}
+		if normalized := marshalCompact(decoded); normalized != "" {
+			values = append(values, normalized)
+		}
+	}
+	return values
 }
 
 func requestMatchesSessionID(req callChainRequestExport, raw string, sessionID string) bool {
@@ -453,11 +535,34 @@ func requestMatchesSessionID(req callChainRequestExport, raw string, sessionID s
 	if strings.Contains(raw, sessionID) {
 		return true
 	}
+	if req.RequestID != "" && (sessionID == req.RequestID || sessionID == "request:"+req.RequestID) {
+		return true
+	}
+	if req.File != "" && (sessionID == req.File || sessionID == "file:"+req.File) {
+		return true
+	}
+	if responseID := strings.TrimPrefix(sessionID, "response-chain:"); responseID != sessionID && responseID != "" {
+		return identifierHasValue(req.Identifiers, "response_id", responseID) ||
+			identifierHasValue(req.Identifiers, "previous_response_id", responseID)
+	}
+	if responseID := strings.TrimPrefix(sessionID, "response:"); responseID != sessionID && responseID != "" {
+		return identifierHasValue(req.Identifiers, "response_id", responseID) ||
+			identifierHasValue(req.Identifiers, "previous_response_id", responseID)
+	}
 	for _, values := range req.Identifiers {
 		for _, value := range values {
 			if value == sessionID {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func identifierHasValue(identifiers map[string][]string, key string, value string) bool {
+	for _, existing := range identifiers[key] {
+		if existing == value {
+			return true
 		}
 	}
 	return false
