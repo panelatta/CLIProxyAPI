@@ -124,3 +124,12 @@ func TestCodexExecutorImageGenerationsPassthrough(t *testing.T) {
 		t.Fatalf("payload = %s", string(resp.Payload))
 	}
 }
+
+func TestCodexImageGenerationsEndpoint(t *testing.T) {
+	if got := codexImageGenerationsEndpoint(""); got != codexImageGenerationsURL {
+		t.Fatalf("default endpoint = %q, want %q", got, codexImageGenerationsURL)
+	}
+	if got := codexImageGenerationsEndpoint("https://example.test/base/"); got != "https://example.test/base/images/generations" {
+		t.Fatalf("custom endpoint = %q", got)
+	}
+}

@@ -30,8 +30,10 @@ import (
 )
 
 const (
-	codexUserAgent  = "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)"
-	codexOriginator = "codex-tui"
+	codexUserAgent             = "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)"
+	codexOriginator            = "codex-tui"
+	codexImageGenerationsURL   = "https://api.openai.com/v1/images/generations"
+	codexBackendDefaultBaseURL = "https://chatgpt.com/backend-api/codex"
 )
 
 var dataTag = []byte("data:")
@@ -153,7 +155,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 
 	apiKey, baseURL := codexCreds(auth)
 	if baseURL == "" {
-		baseURL = "https://chatgpt.com/backend-api/codex"
+		baseURL = codexBackendDefaultBaseURL
 	}
 
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)
@@ -303,7 +305,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 
 	apiKey, baseURL := codexCreds(auth)
 	if baseURL == "" {
-		baseURL = "https://chatgpt.com/backend-api/codex"
+		baseURL = codexBackendDefaultBaseURL
 	}
 
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)
@@ -390,9 +392,6 @@ func (e *CodexExecutor) executeImageGenerations(ctx context.Context, auth *clipr
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	apiKey, baseURL := codexCreds(auth)
-	if baseURL == "" {
-		baseURL = "https://chatgpt.com/backend-api/codex"
-	}
 
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
@@ -405,7 +404,7 @@ func (e *CodexExecutor) executeImageGenerations(ctx context.Context, auth *clipr
 		body, _ = sjson.SetBytes(body, "model", baseModel)
 	}
 
-	url := strings.TrimSuffix(baseURL, "/") + "/images/generations"
+	url := codexImageGenerationsEndpoint(baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return resp, err
@@ -455,6 +454,14 @@ func (e *CodexExecutor) executeImageGenerations(ctx context.Context, auth *clipr
 	return cliproxyexecutor.Response{Payload: data, Headers: httpResp.Header.Clone()}, nil
 }
 
+func codexImageGenerationsEndpoint(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return codexImageGenerationsURL
+	}
+	return strings.TrimSuffix(baseURL, "/") + "/images/generations"
+}
+
 func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	if opts.Alt == "responses/compact" {
 		return nil, statusErr{code: http.StatusBadRequest, msg: "streaming not supported for /responses/compact"}
@@ -463,7 +470,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 
 	apiKey, baseURL := codexCreds(auth)
 	if baseURL == "" {
-		baseURL = "https://chatgpt.com/backend-api/codex"
+		baseURL = codexBackendDefaultBaseURL
 	}
 
 	reporter := helps.NewUsageReporter(ctx, e.Identifier(), baseModel, auth)

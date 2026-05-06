@@ -1292,6 +1292,56 @@
           "xhigh"
         ]
       }
+    },
+    {
+      "id": "gpt-image-1",
+      "object": "model",
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT Image 1",
+      "version": "gpt-image-1",
+      "description": "OpenAI image generation model.",
+      "supported_parameters": [
+        "background",
+        "moderation",
+        "n",
+        "output_compression",
+        "output_format",
+        "quality",
+        "size"
+      ],
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "image"
+      ]
+    },
+    {
+      "id": "gpt-image-2",
+      "object": "model",
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT Image 2",
+      "version": "gpt-image-2",
+      "description": "OpenAI image generation model.",
+      "supported_parameters": [
+        "background",
+        "moderation",
+        "n",
+        "output_compression",
+        "output_format",
+        "quality",
+        "size"
+      ],
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "image"
+      ]
     }
   ],
   "codex-team": [
@@ -1387,6 +1437,56 @@
           "xhigh"
         ]
       }
+    },
+    {
+      "id": "gpt-image-1",
+      "object": "model",
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT Image 1",
+      "version": "gpt-image-1",
+      "description": "OpenAI image generation model.",
+      "supported_parameters": [
+        "background",
+        "moderation",
+        "n",
+        "output_compression",
+        "output_format",
+        "quality",
+        "size"
+      ],
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "image"
+      ]
+    },
+    {
+      "id": "gpt-image-2",
+      "object": "model",
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT Image 2",
+      "version": "gpt-image-2",
+      "description": "OpenAI image generation model.",
+      "supported_parameters": [
+        "background",
+        "moderation",
+        "n",
+        "output_compression",
+        "output_format",
+        "quality",
+        "size"
+      ],
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "image"
+      ]
     }
   ],
   "codex-plus": [
@@ -1505,6 +1605,56 @@
           "xhigh"
         ]
       }
+    },
+    {
+      "id": "gpt-image-1",
+      "object": "model",
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT Image 1",
+      "version": "gpt-image-1",
+      "description": "OpenAI image generation model.",
+      "supported_parameters": [
+        "background",
+        "moderation",
+        "n",
+        "output_compression",
+        "output_format",
+        "quality",
+        "size"
+      ],
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "image"
+      ]
+    },
+    {
+      "id": "gpt-image-2",
+      "object": "model",
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT Image 2",
+      "version": "gpt-image-2",
+      "description": "OpenAI image generation model.",
+      "supported_parameters": [
+        "background",
+        "moderation",
+        "n",
+        "output_compression",
+        "output_format",
+        "quality",
+        "size"
+      ],
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "image"
+      ]
     }
   ],
   "codex-pro": [
@@ -1623,6 +1773,56 @@
           "xhigh"
         ]
       }
+    },
+    {
+      "id": "gpt-image-1",
+      "object": "model",
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT Image 1",
+      "version": "gpt-image-1",
+      "description": "OpenAI image generation model.",
+      "supported_parameters": [
+        "background",
+        "moderation",
+        "n",
+        "output_compression",
+        "output_format",
+        "quality",
+        "size"
+      ],
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "image"
+      ]
+    },
+    {
+      "id": "gpt-image-2",
+      "object": "model",
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT Image 2",
+      "version": "gpt-image-2",
+      "description": "OpenAI image generation model.",
+      "supported_parameters": [
+        "background",
+        "moderation",
+        "n",
+        "output_compression",
+        "output_format",
+        "quality",
+        "size"
+      ],
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "image"
+      ]
     }
   ],
   "kimi": [

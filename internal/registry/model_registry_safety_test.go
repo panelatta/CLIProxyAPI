@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -146,4 +147,123 @@ func TestLookupModelInfoReturnsCloneForStaticDefinitions(t *testing.T) {
 	if second == nil || second.Thinking == nil || len(second.Thinking.Levels) == 0 || second.Thinking.Levels[0] == "mutated" {
 		t.Fatalf("expected static lookup clone, got %+v", second)
 	}
+}
+
+func TestCodexStaticImageModelsAvailableForAllPlans(t *testing.T) {
+	plans := map[string][]*ModelInfo{
+		"free": GetCodexFreeModels(),
+		"team": GetCodexTeamModels(),
+		"plus": GetCodexPlusModels(),
+		"pro":  GetCodexProModels(),
+	}
+
+	for plan, models := range plans {
+		for _, modelID := range []string{"gpt-image-1", "gpt-image-2"} {
+			info := findTestModelInfo(models, modelID)
+			if info == nil {
+				t.Fatalf("expected %s in codex %s models", modelID, plan)
+			}
+			if !testStringSliceContainsFold(info.SupportedOutputModalities, "image") {
+				t.Fatalf("expected %s in codex %s models to support image output, got %+v", modelID, plan, info.SupportedOutputModalities)
+			}
+		}
+	}
+
+	if info := LookupStaticModelInfo("gpt-image-2"); info == nil {
+		t.Fatal("expected gpt-image-2 to be discoverable from static model lookup")
+	}
+}
+
+func TestOpenAIAvailableModelsExposeImageGenerationCapability(t *testing.T) {
+	info := LookupStaticModelInfo("gpt-image-2")
+	if info == nil {
+		t.Fatal("expected static gpt-image-2 model info")
+	}
+
+	r := newTestModelRegistry()
+	r.RegisterClient("codex-1", "codex", []*ModelInfo{info})
+
+	providers := r.GetModelProviders("gpt-image-2")
+	if len(providers) != 1 || providers[0] != "codex" {
+		t.Fatalf("expected gpt-image-2 to route to codex, got %+v", providers)
+	}
+
+	models := r.GetAvailableModels("openai")
+	if len(models) != 1 {
+		t.Fatalf("expected one openai model, got %d", len(models))
+	}
+
+	infoMap, ok := models[0]["info"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected info map, got %#v", models[0]["info"])
+	}
+	meta, ok := infoMap["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected meta map, got %#v", infoMap["meta"])
+	}
+	capabilities, ok := meta["capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected capabilities map, got %#v", meta["capabilities"])
+	}
+	if capabilities["image_generation"] != true {
+		t.Fatalf("expected image_generation capability, got %#v", capabilities)
+	}
+}
+
+func TestLocalModelOverridesAddCodexImageModelsOnce(t *testing.T) {
+	data := &staticModelsJSON{
+		CodexFree: []*ModelInfo{{ID: "gpt-5.2"}},
+		CodexTeam: []*ModelInfo{{ID: "gpt-5.2"}},
+		CodexPlus: []*ModelInfo{
+			{ID: "gpt-5.2"},
+			{ID: "gpt-image-2"},
+		},
+		CodexPro: []*ModelInfo{{ID: "gpt-5.2"}},
+	}
+
+	applyLocalModelOverrides(data)
+	applyLocalModelOverrides(data)
+
+	plans := map[string][]*ModelInfo{
+		"free": data.CodexFree,
+		"team": data.CodexTeam,
+		"plus": data.CodexPlus,
+		"pro":  data.CodexPro,
+	}
+	for plan, models := range plans {
+		if got := countTestModelInfos(models, "gpt-image-1"); got != 1 {
+			t.Fatalf("expected one gpt-image-1 in codex %s models, got %d", plan, got)
+		}
+		if got := countTestModelInfos(models, "gpt-image-2"); got != 1 {
+			t.Fatalf("expected one gpt-image-2 in codex %s models, got %d", plan, got)
+		}
+	}
+}
+
+func findTestModelInfo(models []*ModelInfo, modelID string) *ModelInfo {
+	for _, model := range models {
+		if model != nil && model.ID == modelID {
+			return model
+		}
+	}
+	return nil
+}
+
+func countTestModelInfos(models []*ModelInfo, modelID string) int {
+	count := 0
+	for _, model := range models {
+		if model != nil && model.ID == modelID {
+			count++
+		}
+	}
+	return count
+}
+
+func testStringSliceContainsFold(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, needle) {
+			return true
+		}
+	}
+	return false
 }
