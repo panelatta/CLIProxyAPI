@@ -179,6 +179,7 @@ func fetchModelsFromRemote(ctx context.Context) (*staticModelsJSON, string) {
 			log.Warnf("models parse failed from %s: %v", url, err)
 			continue
 		}
+		applyLocalModelOverrides(&parsed)
 		if err := validateModelsCatalog(&parsed); err != nil {
 			log.Warnf("models validate failed from %s: %v", url, err)
 			continue
@@ -299,6 +300,7 @@ func loadModelsFromBytes(data []byte, source string) error {
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return fmt.Errorf("%s: decode models catalog: %w", source, err)
 	}
+	applyLocalModelOverrides(&parsed)
 	if err := validateModelsCatalog(&parsed); err != nil {
 		return fmt.Errorf("%s: validate models catalog: %w", source, err)
 	}
@@ -307,6 +309,76 @@ func loadModelsFromBytes(data []byte, source string) error {
 	modelsCatalogStore.data = &parsed
 	modelsCatalogStore.mu.Unlock()
 	return nil
+}
+
+var codexImageGenerationModels = []*ModelInfo{
+	{
+		ID:                  "gpt-image-1",
+		Object:              "model",
+		OwnedBy:             "openai",
+		Type:                "openai",
+		DisplayName:         "GPT Image 1",
+		Version:             "gpt-image-1",
+		Description:         "OpenAI image generation model.",
+		SupportedParameters: []string{"background", "moderation", "n", "output_compression", "output_format", "quality", "size"},
+		SupportedInputModalities: []string{
+			"text",
+			"image",
+		},
+		SupportedOutputModalities: []string{
+			"image",
+		},
+	},
+	{
+		ID:                  "gpt-image-2",
+		Object:              "model",
+		OwnedBy:             "openai",
+		Type:                "openai",
+		DisplayName:         "GPT Image 2",
+		Version:             "gpt-image-2",
+		Description:         "OpenAI image generation model.",
+		SupportedParameters: []string{"background", "moderation", "n", "output_compression", "output_format", "quality", "size"},
+		SupportedInputModalities: []string{
+			"text",
+			"image",
+		},
+		SupportedOutputModalities: []string{
+			"image",
+		},
+	},
+}
+
+func applyLocalModelOverrides(data *staticModelsJSON) {
+	if data == nil {
+		return
+	}
+
+	data.CodexFree = appendMissingModelInfos(data.CodexFree, codexImageGenerationModels)
+	data.CodexTeam = appendMissingModelInfos(data.CodexTeam, codexImageGenerationModels)
+	data.CodexPlus = appendMissingModelInfos(data.CodexPlus, codexImageGenerationModels)
+	data.CodexPro = appendMissingModelInfos(data.CodexPro, codexImageGenerationModels)
+}
+
+func appendMissingModelInfos(models []*ModelInfo, additions []*ModelInfo) []*ModelInfo {
+	seen := make(map[string]struct{}, len(models)+len(additions))
+	for _, model := range models {
+		if model == nil || strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		seen[model.ID] = struct{}{}
+	}
+
+	for _, addition := range additions {
+		if addition == nil || strings.TrimSpace(addition.ID) == "" {
+			continue
+		}
+		if _, exists := seen[addition.ID]; exists {
+			continue
+		}
+		models = append(models, cloneModelInfo(addition))
+		seen[addition.ID] = struct{}{}
+	}
+	return models
 }
 
 func getModels() *staticModelsJSON {
