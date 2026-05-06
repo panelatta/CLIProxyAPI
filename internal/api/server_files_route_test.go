@@ -21,3 +21,18 @@ func TestV1FilesRouteRegistered(t *testing.T) {
 		t.Fatalf("expected /v1/files route to be registered, got 404 body=%s", resp.Body.String())
 	}
 }
+
+func TestV1ImageGenerationsRouteRegistered(t *testing.T) {
+	server := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"prompt":"draw"}`))
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	server.engine.ServeHTTP(resp, req)
+
+	if resp.Code == http.StatusNotFound {
+		t.Fatalf("expected /v1/images/generations route to be registered, got 404 body=%s", resp.Body.String())
+	}
+}
