@@ -34,8 +34,8 @@ func TestGenerateAuthURLRequestsImageScope(t *testing.T) {
 	}
 }
 
-func TestRefreshTokensRequestsImageScope(t *testing.T) {
-	var gotScope string
+func TestRefreshTokensDoesNotNarrowGrantedScopes(t *testing.T) {
+	var hasScope bool
 	auth := &CodexAuth{
 		httpClient: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -44,7 +44,7 @@ func TestRefreshTokensRequestsImageScope(t *testing.T) {
 				if err != nil {
 					t.Fatalf("parse refresh body: %v", err)
 				}
-				gotScope = values.Get("scope")
+				_, hasScope = values["scope"]
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"access_token":"access","refresh_token":"refresh","id_token":"","token_type":"Bearer","expires_in":3600}`)),
@@ -58,8 +58,8 @@ func TestRefreshTokensRequestsImageScope(t *testing.T) {
 	if _, err := auth.RefreshTokens(context.Background(), "refresh"); err != nil {
 		t.Fatalf("RefreshTokens: %v", err)
 	}
-	if gotScope != CodexRefreshScopes {
-		t.Fatalf("scope = %q, want %q", gotScope, CodexRefreshScopes)
+	if hasScope {
+		t.Fatal("refresh request should not include scope")
 	}
 }
 

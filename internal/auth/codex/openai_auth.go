@@ -29,7 +29,6 @@ const (
 
 const (
 	CodexAuthorizeScopes = "openid email profile offline_access api.model.images.request"
-	CodexRefreshScopes   = "openid email profile api.model.images.request"
 )
 
 // CodexAuth handles the OpenAI OAuth2 authentication flow.
@@ -197,7 +196,6 @@ func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*Co
 		"client_id":     {ClientID},
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
-		"scope":         {CodexRefreshScopes},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(data.Encode()))
