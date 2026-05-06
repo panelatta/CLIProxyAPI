@@ -77,3 +77,50 @@ func TestCodexExecutorCompactAddsDefaultInstructions(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexExecutorImageGenerationsPassthrough(t *testing.T) {
+	var gotPath string
+	var gotBody []byte
+	var gotAccept string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAccept = r.Header.Get("Accept")
+		body, _ := io.ReadAll(r.Body)
+		gotBody = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"aW1hZ2U="}]}`))
+	}))
+	defer server.Close()
+
+	executor := NewCodexExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL,
+		"api_key":  "test",
+	}}
+
+	resp, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-image-1",
+		Payload: []byte(`{"model":"image-alias","prompt":"draw"}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FromString("openai"),
+		Alt:          "images/generations",
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if gotPath != "/images/generations" {
+		t.Fatalf("path = %q, want %q", gotPath, "/images/generations")
+	}
+	if gjson.GetBytes(gotBody, "model").String() != "gpt-image-1" {
+		t.Fatalf("body model = %s, want gpt-image-1", string(gotBody))
+	}
+	if gjson.GetBytes(gotBody, "prompt").String() != "draw" {
+		t.Fatalf("body prompt = %s", string(gotBody))
+	}
+	if gotAccept != "application/json" {
+		t.Fatalf("Accept = %q, want application/json", gotAccept)
+	}
+	if string(resp.Payload) != `{"created":1,"data":[{"b64_json":"aW1hZ2U="}]}` {
+		t.Fatalf("payload = %s", string(resp.Payload))
+	}
+}

@@ -165,6 +165,36 @@ func (h *OpenAIAPIHandler) Completions(c *gin.Context) {
 
 }
 
+// ImageGenerations handles the /v1/images/generations endpoint.
+// It forwards OpenAI image generation requests through the existing model
+// routing and auth selection path.
+func (h *OpenAIAPIHandler) ImageGenerations(c *gin.Context) {
+	rawJSON, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: fmt.Sprintf("Invalid request: %v", err),
+				Type:    "invalid_request_error",
+			},
+		})
+		return
+	}
+
+	modelName := gjson.GetBytes(rawJSON, "model").String()
+	if modelName == "" {
+		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: "model is required for /v1/images/generations routing",
+				Type:    "invalid_request_error",
+				Code:    "model_required",
+			},
+		})
+		return
+	}
+
+	h.handleImageGenerationResponse(c, rawJSON)
+}
+
 // convertCompletionsRequestToChatCompletions converts OpenAI completions API request to chat completions format.
 // This allows the completions endpoint to use the existing chat completions infrastructure.
 //
@@ -430,6 +460,24 @@ func (h *OpenAIAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []
 		return
 	}
 	cleanupUploadedFilesAfterSuccess(h.UploadedFileStore, usedFileIDs)
+	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+	_, _ = c.Writer.Write(resp)
+	cliCancel()
+}
+
+func (h *OpenAIAPIHandler) handleImageGenerationResponse(c *gin.Context, rawJSON []byte) {
+	c.Header("Content-Type", "application/json")
+
+	modelName := gjson.GetBytes(rawJSON, "model").String()
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
+	resp, upstreamHeaders, errMsg := h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "images/generations")
+	stopKeepAlive()
+	if errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 	_, _ = c.Writer.Write(resp)
 	cliCancel()
