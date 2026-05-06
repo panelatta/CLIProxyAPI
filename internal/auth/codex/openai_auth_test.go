@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,51 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestGenerateAuthURLRequestsImageScope(t *testing.T) {
+	auth := NewCodexAuth(nil)
+	authURL, err := auth.GenerateAuthURL("state", &PKCECodes{CodeChallenge: "challenge"})
+	if err != nil {
+		t.Fatalf("GenerateAuthURL: %v", err)
+	}
+
+	parsed, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatalf("parse auth URL: %v", err)
+	}
+	if got := parsed.Query().Get("scope"); got != CodexAuthorizeScopes {
+		t.Fatalf("scope = %q, want %q", got, CodexAuthorizeScopes)
+	}
+}
+
+func TestRefreshTokensRequestsImageScope(t *testing.T) {
+	var gotScope string
+	auth := &CodexAuth{
+		httpClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				body, _ := io.ReadAll(req.Body)
+				values, err := url.ParseQuery(string(body))
+				if err != nil {
+					t.Fatalf("parse refresh body: %v", err)
+				}
+				gotScope = values.Get("scope")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"access_token":"access","refresh_token":"refresh","id_token":"","token_type":"Bearer","expires_in":3600}`)),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			}),
+		},
+	}
+
+	if _, err := auth.RefreshTokens(context.Background(), "refresh"); err != nil {
+		t.Fatalf("RefreshTokens: %v", err)
+	}
+	if gotScope != CodexRefreshScopes {
+		t.Fatalf("scope = %q, want %q", gotScope, CodexRefreshScopes)
+	}
 }
 
 func TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce(t *testing.T) {
