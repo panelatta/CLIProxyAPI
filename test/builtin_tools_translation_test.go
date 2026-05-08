@@ -31,6 +31,27 @@ func TestOpenAIToCodex_PreservesBuiltinTools(t *testing.T) {
 	if got := gjson.GetBytes(out, "tool_choice.type").String(); got != "web_search" {
 		t.Fatalf("expected tool_choice.type=web_search, got %q: %s", got, string(out))
 	}
+	if got := gjson.GetBytes(out, `include.#(=="web_search_call.action.sources")`).String(); got != "web_search_call.action.sources" {
+		t.Fatalf("expected web search sources include, got %q: %s", got, string(out))
+	}
+}
+
+func TestOpenAIResponsesToCodex_AddsWebSearchSourcesInclude(t *testing.T) {
+	in := []byte(`{
+		"model":"gpt-5",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],
+		"include":["reasoning.encrypted_content"],
+		"tools":[{"type":"web_search","search_context_size":"low"}]
+	}`)
+
+	out := sdktranslator.TranslateRequest(sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex, "gpt-5", in, false)
+
+	if got := gjson.GetBytes(out, `include.#(=="reasoning.encrypted_content")`).String(); got != "reasoning.encrypted_content" {
+		t.Fatalf("expected reasoning include, got %q: %s", got, string(out))
+	}
+	if got := gjson.GetBytes(out, `include.#(=="web_search_call.action.sources")`).String(); got != "web_search_call.action.sources" {
+		t.Fatalf("expected web search sources include, got %q: %s", got, string(out))
+	}
 }
 
 func TestOpenAIResponsesToOpenAI_IgnoresBuiltinTools(t *testing.T) {

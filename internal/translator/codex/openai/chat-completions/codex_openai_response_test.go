@@ -91,6 +91,40 @@ func TestConvertCodexResponseToOpenAI_ToolCallArgumentsDeltaOmitsNullContentFiel
 	}
 }
 
+func TestConvertCodexResponseToOpenAI_StreamWebSearchCallEmitsAnnotations(t *testing.T) {
+	ctx := context.Background()
+	var param any
+
+	_ = ConvertCodexResponseToOpenAI(ctx, "gpt-5.5", nil, nil, []byte(`data: {"type":"response.created","response":{"id":"resp_123","created_at":1700000000,"model":"gpt-5.5"}}`), &param)
+
+	out := ConvertCodexResponseToOpenAI(ctx, "gpt-5.5", nil, nil, []byte(`data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://example.com/one","title":"Example One","start_index":4,"end_index":12}}`), &param)
+	if len(out) != 1 {
+		t.Fatalf("expected annotation chunk, got %d", len(out))
+	}
+	if got := gjson.GetBytes(out[0], "choices.0.delta.annotations.0.url_citation.url").String(); got != "https://example.com/one" {
+		t.Fatalf("unexpected annotation url: %q; chunk=%s", got, string(out[0]))
+	}
+
+	out = ConvertCodexResponseToOpenAI(ctx, "gpt-5.5", nil, nil, []byte(`data: {"type":"response.output_item.done","item":{"id":"ws_123","type":"web_search_call","status":"completed","action":{"type":"search","query":"OpenAI docs","sources":[{"url":"https://example.com/two","title":"Example Two"}]}}}`), &param)
+	if len(out) != 1 {
+		t.Fatalf("expected web search chunk, got %d", len(out))
+	}
+	if got := gjson.GetBytes(out[0], "choices.0.delta.web_search_calls.0.action.query").String(); got != "OpenAI docs" {
+		t.Fatalf("unexpected web search query: %q; chunk=%s", got, string(out[0]))
+	}
+	if got := gjson.GetBytes(out[0], "choices.0.delta.annotations.0.url_citation.url").String(); got != "https://example.com/two" {
+		t.Fatalf("unexpected web search source annotation: %q; chunk=%s", got, string(out[0]))
+	}
+
+	out = ConvertCodexResponseToOpenAI(ctx, "gpt-5.5", nil, nil, []byte(`data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`), &param)
+	if len(out) != 1 {
+		t.Fatalf("expected completion chunk, got %d", len(out))
+	}
+	if got := gjson.GetBytes(out[0], "choices.0.finish_reason").String(); got != "stop" {
+		t.Fatalf("web search call should not force tool_calls finish reason, got %q; chunk=%s", got, string(out[0]))
+	}
+}
+
 func TestConvertCodexResponseToOpenAI_StreamPartialImageEmitsDeltaImages(t *testing.T) {
 	ctx := context.Background()
 	var param any
@@ -147,5 +181,25 @@ func TestConvertCodexResponseToOpenAI_NonStreamImageGenerationCallAddsMessageIma
 	gotURL := gjson.GetBytes(out, "choices.0.message.images.0.image_url.url").String()
 	if gotURL != "data:image/png;base64,aGVsbG8=" {
 		t.Fatalf("expected image url %q, got %q; chunk=%s", "data:image/png;base64,aGVsbG8=", gotURL, string(out))
+	}
+}
+
+func TestConvertCodexResponseToOpenAINonStream_WebSearchAnnotations(t *testing.T) {
+	ctx := context.Background()
+
+	raw := []byte(`{"type":"response.completed","response":{"id":"resp_123","created_at":1700000000,"model":"gpt-5.5","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"web_search_call","id":"ws_123","status":"completed","action":{"type":"search","query":"OpenAI docs","sources":[{"url":"https://example.com/source","title":"Source"}]}},{"type":"message","content":[{"type":"output_text","text":"see source","annotations":[{"type":"url_citation","url":"https://example.com/source","title":"Source","start_index":4,"end_index":10},{"type":"url_citation","url":"https://example.com/second","title":"Second","start_index":11,"end_index":18}]}]}]}}`)
+	out := ConvertCodexResponseToOpenAINonStream(ctx, "gpt-5.5", nil, nil, raw, nil)
+
+	if got := gjson.GetBytes(out, "choices.0.message.annotations.#").Int(); got != 2 {
+		t.Fatalf("expected 2 unique annotations, got %d; response=%s", got, string(out))
+	}
+	if got := gjson.GetBytes(out, "choices.0.message.annotations.0.url_citation.url").String(); got != "https://example.com/source" {
+		t.Fatalf("unexpected first annotation url: %q; response=%s", got, string(out))
+	}
+	if got := gjson.GetBytes(out, "choices.0.message.web_search_calls.0.action.sources.0.url").String(); got != "https://example.com/source" {
+		t.Fatalf("unexpected web search source: %q; response=%s", got, string(out))
+	}
+	if got := gjson.GetBytes(out, "choices.0.finish_reason").String(); got != "stop" {
+		t.Fatalf("web search call should not force tool_calls finish reason, got %q; response=%s", got, string(out))
 	}
 }
