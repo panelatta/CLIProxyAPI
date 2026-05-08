@@ -211,11 +211,11 @@ func TestConvertOpenAIResponsesRequestToCodex_OriginalIssue(t *testing.T) {
 		t.Error("parallel_tool_calls should be true")
 	}
 
-	include := gjson.Get(outputStr, "include")
-	if !include.IsArray() || len(include.Array()) != 1 {
-		t.Error("include should be an array with one element")
-	} else if include.Array()[0].String() != "reasoning.encrypted_content" {
-		t.Errorf("Expected include[0] to be 'reasoning.encrypted_content', got '%s'", include.Array()[0].String())
+	if got := gjson.Get(outputStr, `include.#(=="reasoning.encrypted_content")`).String(); got != "reasoning.encrypted_content" {
+		t.Errorf("Expected include to contain 'reasoning.encrypted_content', got %s", gjson.Get(outputStr, "include").Raw)
+	}
+	if got := gjson.Get(outputStr, `include.#(=="web_search_call.action.sources")`).String(); got != "web_search_call.action.sources" {
+		t.Errorf("Expected include to contain 'web_search_call.action.sources', got %s", gjson.Get(outputStr, "include").Raw)
 	}
 }
 

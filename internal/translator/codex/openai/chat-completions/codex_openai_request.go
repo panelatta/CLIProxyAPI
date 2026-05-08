@@ -61,7 +61,7 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	}
 	out, _ = sjson.SetBytes(out, "parallel_tool_calls", true)
 	out, _ = sjson.SetBytes(out, "reasoning.summary", "auto")
-	out, _ = sjson.SetBytes(out, "include", []string{"reasoning.encrypted_content"})
+	out = ensureCodexResponseIncludes(out, "reasoning.encrypted_content", "web_search_call.action.sources")
 
 	// Model
 	out, _ = sjson.SetBytes(out, "model", modelName)
@@ -357,6 +357,39 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 
 	out, _ = sjson.SetBytes(out, "store", false)
 	return out
+}
+
+func ensureCodexResponseIncludes(rawJSON []byte, includes ...string) []byte {
+	seen := map[string]struct{}{}
+	values := make([]string, 0, len(includes))
+	if current := gjson.GetBytes(rawJSON, "include"); current.IsArray() {
+		for _, item := range current.Array() {
+			value := item.String()
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	for _, value := range includes {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	updated, err := sjson.SetBytes(rawJSON, "include", values)
+	if err != nil {
+		return rawJSON
+	}
+	return updated
 }
 
 // shortenNameIfNeeded applies the simple shortening rule for a single name.

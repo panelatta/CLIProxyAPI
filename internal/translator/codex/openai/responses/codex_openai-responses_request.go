@@ -20,7 +20,7 @@ func ConvertOpenAIResponsesRequestToCodex(modelName string, inputRawJSON []byte,
 	rawJSON, _ = sjson.SetBytes(rawJSON, "stream", true)
 	rawJSON, _ = sjson.SetBytes(rawJSON, "store", false)
 	rawJSON, _ = sjson.SetBytes(rawJSON, "parallel_tool_calls", true)
-	rawJSON, _ = sjson.SetBytes(rawJSON, "include", []string{"reasoning.encrypted_content"})
+	rawJSON = ensureCodexResponseIncludes(rawJSON, "reasoning.encrypted_content", "web_search_call.action.sources")
 	// Codex Responses rejects token limit fields, so strip them out before forwarding.
 	rawJSON, _ = sjson.DeleteBytes(rawJSON, "max_output_tokens")
 	rawJSON, _ = sjson.DeleteBytes(rawJSON, "max_completion_tokens")
@@ -60,6 +60,39 @@ func applyResponsesCompactionCompatibility(rawJSON []byte) []byte {
 
 	rawJSON, _ = sjson.DeleteBytes(rawJSON, "context_management")
 	return rawJSON
+}
+
+func ensureCodexResponseIncludes(rawJSON []byte, includes ...string) []byte {
+	seen := map[string]struct{}{}
+	values := make([]string, 0, len(includes))
+	if current := gjson.GetBytes(rawJSON, "include"); current.IsArray() {
+		for _, item := range current.Array() {
+			value := item.String()
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	for _, value := range includes {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	updated, err := sjson.SetBytes(rawJSON, "include", values)
+	if err != nil {
+		return rawJSON
+	}
+	return updated
 }
 
 // convertSystemRoleToDeveloper traverses the input array and converts any message items

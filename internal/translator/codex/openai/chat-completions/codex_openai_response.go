@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ type ConvertCliToOpenAIParams struct {
 	HasReceivedArgumentsDelta bool
 	HasToolCallAnnounced      bool
 	LastImageHashByItemID     map[string][32]byte
+	EmittedAnnotationKeys     map[string]struct{}
+	WebSearchCallIndex        int
 }
 
 // ConvertCodexResponseToOpenAI translates a single chunk of a streaming response from the
@@ -55,7 +58,16 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 			HasReceivedArgumentsDelta: false,
 			HasToolCallAnnounced:      false,
 			LastImageHashByItemID:     make(map[string][32]byte),
+			EmittedAnnotationKeys:     make(map[string]struct{}),
+			WebSearchCallIndex:        -1,
 		}
+	}
+	state := (*param).(*ConvertCliToOpenAIParams)
+	if state.LastImageHashByItemID == nil {
+		state.LastImageHashByItemID = make(map[string][32]byte)
+	}
+	if state.EmittedAnnotationKeys == nil {
+		state.EmittedAnnotationKeys = make(map[string]struct{})
 	}
 
 	if !bytes.HasPrefix(rawJSON, dataTag) {
@@ -71,17 +83,14 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 	typeResult := rootResult.Get("type")
 	dataType := typeResult.String()
 	if dataType == "response.created" {
-		(*param).(*ConvertCliToOpenAIParams).ResponseID = rootResult.Get("response.id").String()
-		(*param).(*ConvertCliToOpenAIParams).CreatedAt = rootResult.Get("response.created_at").Int()
-		(*param).(*ConvertCliToOpenAIParams).Model = rootResult.Get("response.model").String()
-		if (*param).(*ConvertCliToOpenAIParams).LastImageHashByItemID == nil {
-			(*param).(*ConvertCliToOpenAIParams).LastImageHashByItemID = make(map[string][32]byte)
-		}
+		state.ResponseID = rootResult.Get("response.id").String()
+		state.CreatedAt = rootResult.Get("response.created_at").Int()
+		state.Model = rootResult.Get("response.model").String()
 		return [][]byte{}
 	}
 
 	// Extract and set the model version.
-	cachedModel := (*param).(*ConvertCliToOpenAIParams).Model
+	cachedModel := state.Model
 	if modelResult := gjson.GetBytes(rawJSON, "model"); modelResult.Exists() {
 		template, _ = sjson.SetBytes(template, "model", modelResult.String())
 	} else if cachedModel != "" {
@@ -90,10 +99,10 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 		template, _ = sjson.SetBytes(template, "model", modelName)
 	}
 
-	template, _ = sjson.SetBytes(template, "created", (*param).(*ConvertCliToOpenAIParams).CreatedAt)
+	template, _ = sjson.SetBytes(template, "created", state.CreatedAt)
 
 	// Extract and set the response ID.
-	template, _ = sjson.SetBytes(template, "id", (*param).(*ConvertCliToOpenAIParams).ResponseID)
+	template, _ = sjson.SetBytes(template, "id", state.ResponseID)
 
 	// Extract and set usage metadata (token counts).
 	if usageResult := gjson.GetBytes(rawJSON, "response.usage"); usageResult.Exists() {
@@ -127,6 +136,22 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 			template, _ = sjson.SetBytes(template, "choices.0.delta.role", "assistant")
 			template, _ = sjson.SetBytes(template, "choices.0.delta.content", deltaResult.String())
 		}
+	} else if dataType == "response.output_text.annotation.added" {
+		annotations := annotationsFromResult(rootResult.Get("annotation"))
+		annotations = filterNewAnnotations(state, annotations)
+		if len(annotations) == 0 {
+			return [][]byte{}
+		}
+		template, _ = sjson.SetBytes(template, "choices.0.delta.role", "assistant")
+		template = setRawJSONArray(template, "choices.0.delta.annotations", annotations)
+	} else if dataType == "response.content_part.done" {
+		annotations := annotationsFromResult(rootResult.Get("part.annotations"))
+		annotations = filterNewAnnotations(state, annotations)
+		if len(annotations) == 0 {
+			return [][]byte{}
+		}
+		template, _ = sjson.SetBytes(template, "choices.0.delta.role", "assistant")
+		template = setRawJSONArray(template, "choices.0.delta.annotations", annotations)
 	} else if dataType == "response.image_generation_call.partial_image" {
 		itemID := rootResult.Get("item_id").String()
 		b64 := rootResult.Get("partial_image_b64").String()
@@ -134,15 +159,11 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 			return [][]byte{}
 		}
 		if itemID != "" {
-			p := (*param).(*ConvertCliToOpenAIParams)
-			if p.LastImageHashByItemID == nil {
-				p.LastImageHashByItemID = make(map[string][32]byte)
-			}
 			hash := sha256.Sum256([]byte(b64))
-			if last, ok := p.LastImageHashByItemID[itemID]; ok && last == hash {
+			if last, ok := state.LastImageHashByItemID[itemID]; ok && last == hash {
 				return [][]byte{}
 			}
-			p.LastImageHashByItemID[itemID] = hash
+			state.LastImageHashByItemID[itemID] = hash
 		}
 
 		outputFormat := rootResult.Get("output_format").String()
@@ -162,7 +183,7 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 		template, _ = sjson.SetRawBytes(template, "choices.0.delta.images.-1", imagePayload)
 	} else if dataType == "response.completed" {
 		finishReason := "stop"
-		if (*param).(*ConvertCliToOpenAIParams).FunctionCallIndex != -1 {
+		if state.FunctionCallIndex != -1 {
 			finishReason = "tool_calls"
 		}
 		template, _ = sjson.SetBytes(template, "choices.0.finish_reason", finishReason)
@@ -174,12 +195,12 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 		}
 
 		// Increment index for this new function call item.
-		(*param).(*ConvertCliToOpenAIParams).FunctionCallIndex++
-		(*param).(*ConvertCliToOpenAIParams).HasReceivedArgumentsDelta = false
-		(*param).(*ConvertCliToOpenAIParams).HasToolCallAnnounced = true
+		state.FunctionCallIndex++
+		state.HasReceivedArgumentsDelta = false
+		state.HasToolCallAnnounced = true
 
 		functionCallItemTemplate := []byte(`{"index":0,"id":"","type":"function","function":{"name":"","arguments":""}}`)
-		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "index", (*param).(*ConvertCliToOpenAIParams).FunctionCallIndex)
+		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "index", state.FunctionCallIndex)
 		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "id", itemResult.Get("call_id").String())
 
 		// Restore original tool name if it was shortened.
@@ -196,18 +217,18 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 		template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls.-1", functionCallItemTemplate)
 
 	} else if dataType == "response.function_call_arguments.delta" {
-		(*param).(*ConvertCliToOpenAIParams).HasReceivedArgumentsDelta = true
+		state.HasReceivedArgumentsDelta = true
 
 		deltaValue := rootResult.Get("delta").String()
 		functionCallItemTemplate := []byte(`{"index":0,"function":{"arguments":""}}`)
-		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "index", (*param).(*ConvertCliToOpenAIParams).FunctionCallIndex)
+		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "index", state.FunctionCallIndex)
 		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "function.arguments", deltaValue)
 
 		template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls", []byte(`[]`))
 		template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls.-1", functionCallItemTemplate)
 
 	} else if dataType == "response.function_call_arguments.done" {
-		if (*param).(*ConvertCliToOpenAIParams).HasReceivedArgumentsDelta {
+		if state.HasReceivedArgumentsDelta {
 			// Arguments were already streamed via delta events; nothing to emit.
 			return [][]byte{}
 		}
@@ -215,7 +236,7 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 		// Fallback: no delta events were received, emit the full arguments as a single chunk.
 		fullArgs := rootResult.Get("arguments").String()
 		functionCallItemTemplate := []byte(`{"index":0,"function":{"arguments":""}}`)
-		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "index", (*param).(*ConvertCliToOpenAIParams).FunctionCallIndex)
+		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "index", state.FunctionCallIndex)
 		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "function.arguments", fullArgs)
 
 		template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls", []byte(`[]`))
@@ -234,15 +255,11 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 				return [][]byte{}
 			}
 			if itemID != "" {
-				p := (*param).(*ConvertCliToOpenAIParams)
-				if p.LastImageHashByItemID == nil {
-					p.LastImageHashByItemID = make(map[string][32]byte)
-				}
 				hash := sha256.Sum256([]byte(b64))
-				if last, ok := p.LastImageHashByItemID[itemID]; ok && last == hash {
+				if last, ok := state.LastImageHashByItemID[itemID]; ok && last == hash {
 					return [][]byte{}
 				}
-				p.LastImageHashByItemID[itemID] = hash
+				state.LastImageHashByItemID[itemID] = hash
 			}
 
 			outputFormat := itemResult.Get("output_format").String()
@@ -262,21 +279,42 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 			template, _ = sjson.SetRawBytes(template, "choices.0.delta.images.-1", imagePayload)
 			return [][]byte{template}
 		}
+		if itemType == "message" {
+			annotations := annotationsFromMessageItem(itemResult)
+			annotations = filterNewAnnotations(state, annotations)
+			if len(annotations) == 0 {
+				return [][]byte{}
+			}
+			template, _ = sjson.SetBytes(template, "choices.0.delta.role", "assistant")
+			template = setRawJSONArray(template, "choices.0.delta.annotations", annotations)
+			return [][]byte{template}
+		}
+		if itemType == "web_search_call" {
+			state.WebSearchCallIndex++
+			webSearchCall := webSearchCallFromItem(itemResult, state.WebSearchCallIndex)
+			template, _ = sjson.SetBytes(template, "choices.0.delta.role", "assistant")
+			template = setRawJSONArray(template, "choices.0.delta.web_search_calls", [][]byte{webSearchCall})
+			annotations := filterNewAnnotations(state, annotationsFromWebSearchCall(itemResult))
+			if len(annotations) > 0 {
+				template = setRawJSONArray(template, "choices.0.delta.annotations", annotations)
+			}
+			return [][]byte{template}
+		}
 		if itemType != "function_call" {
 			return [][]byte{}
 		}
 
-		if (*param).(*ConvertCliToOpenAIParams).HasToolCallAnnounced {
+		if state.HasToolCallAnnounced {
 			// Tool call was already announced via output_item.added; skip emission.
-			(*param).(*ConvertCliToOpenAIParams).HasToolCallAnnounced = false
+			state.HasToolCallAnnounced = false
 			return [][]byte{}
 		}
 
 		// Fallback path: model skipped output_item.added, so emit complete tool call now.
-		(*param).(*ConvertCliToOpenAIParams).FunctionCallIndex++
+		state.FunctionCallIndex++
 
 		functionCallItemTemplate := []byte(`{"index":0,"id":"","type":"function","function":{"name":"","arguments":""}}`)
-		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "index", (*param).(*ConvertCliToOpenAIParams).FunctionCallIndex)
+		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "index", state.FunctionCallIndex)
 
 		template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls", []byte(`[]`))
 		functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "id", itemResult.Get("call_id").String())
@@ -365,6 +403,8 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 	// Process the output array for content and function calls
 	var toolCalls [][]byte
 	var images [][]byte
+	var annotations [][]byte
+	var webSearchCalls [][]byte
 	outputResult := responseResult.Get("output")
 	if outputResult.IsArray() {
 		outputArray := outputResult.Array()
@@ -392,8 +432,8 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 					contentArray := contentResult.Array()
 					for _, contentItem := range contentArray {
 						if contentItem.Get("type").String() == "output_text" {
-							contentText = contentItem.Get("text").String()
-							break
+							contentText += contentItem.Get("text").String()
+							annotations = append(annotations, annotationsFromResult(contentItem.Get("annotations"))...)
 						}
 					}
 				}
@@ -432,6 +472,9 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 				imagePayload, _ = sjson.SetBytes(imagePayload, "index", len(images))
 				imagePayload, _ = sjson.SetBytes(imagePayload, "image_url.url", imageURL)
 				images = append(images, imagePayload)
+			case "web_search_call":
+				webSearchCalls = append(webSearchCalls, webSearchCallFromItem(outputItem, len(webSearchCalls)))
+				annotations = append(annotations, annotationsFromWebSearchCall(outputItem)...)
 			}
 		}
 
@@ -461,6 +504,16 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 			for _, image := range images {
 				template, _ = sjson.SetRawBytes(template, "choices.0.message.images.-1", image)
 			}
+			template, _ = sjson.SetBytes(template, "choices.0.message.role", "assistant")
+		}
+
+		annotations = dedupeAnnotations(annotations)
+		if len(annotations) > 0 {
+			template = setRawJSONArray(template, "choices.0.message.annotations", annotations)
+			template, _ = sjson.SetBytes(template, "choices.0.message.role", "assistant")
+		}
+		if len(webSearchCalls) > 0 {
+			template = setRawJSONArray(template, "choices.0.message.web_search_calls", webSearchCalls)
 			template, _ = sjson.SetBytes(template, "choices.0.message.role", "assistant")
 		}
 	}
@@ -510,6 +563,160 @@ func buildReverseMapFromOriginalOpenAI(original []byte) map[string]string {
 		}
 	}
 	return rev
+}
+
+func annotationsFromMessageItem(item gjson.Result) [][]byte {
+	var annotations [][]byte
+	content := item.Get("content")
+	if !content.IsArray() {
+		return annotations
+	}
+	for _, part := range content.Array() {
+		if part.Get("type").String() != "output_text" {
+			continue
+		}
+		annotations = append(annotations, annotationsFromResult(part.Get("annotations"))...)
+	}
+	return annotations
+}
+
+func annotationsFromWebSearchCall(item gjson.Result) [][]byte {
+	var annotations [][]byte
+	action := item.Get("action")
+	if !action.Exists() {
+		return annotations
+	}
+	if sources := action.Get("sources"); sources.IsArray() {
+		for _, source := range sources.Array() {
+			annotations = append(annotations, annotationFromSource(source))
+		}
+	}
+	if url := action.Get("url").String(); url != "" {
+		annotations = append(annotations, annotationFromURL(url, action.Get("title").String(), 0, 0))
+	}
+	return annotations
+}
+
+func annotationsFromResult(result gjson.Result) [][]byte {
+	var annotations [][]byte
+	if !result.Exists() {
+		return annotations
+	}
+	if result.IsArray() {
+		for _, item := range result.Array() {
+			annotations = append(annotations, annotationsFromResult(item)...)
+		}
+		return annotations
+	}
+	if result.IsObject() {
+		annotation := annotationFromSource(result)
+		if len(annotation) > 0 {
+			annotations = append(annotations, annotation)
+		}
+	}
+	return annotations
+}
+
+func annotationFromSource(source gjson.Result) []byte {
+	if !source.Exists() {
+		return nil
+	}
+	nested := source.Get("url_citation")
+	if nested.Exists() {
+		source = nested
+	}
+	url := source.Get("url").String()
+	if url == "" {
+		return nil
+	}
+	title := source.Get("title").String()
+	start := source.Get("start_index").Int()
+	end := source.Get("end_index").Int()
+	return annotationFromURL(url, title, start, end)
+}
+
+func annotationFromURL(url, title string, start, end int64) []byte {
+	if url == "" {
+		return nil
+	}
+	if title == "" {
+		title = url
+	}
+	annotation := []byte(`{"type":"url_citation","url_citation":{"url":"","title":"","start_index":0,"end_index":0}}`)
+	annotation, _ = sjson.SetBytes(annotation, "url_citation.url", url)
+	annotation, _ = sjson.SetBytes(annotation, "url_citation.title", title)
+	annotation, _ = sjson.SetBytes(annotation, "url_citation.start_index", start)
+	annotation, _ = sjson.SetBytes(annotation, "url_citation.end_index", end)
+	return annotation
+}
+
+func filterNewAnnotations(state *ConvertCliToOpenAIParams, annotations [][]byte) [][]byte {
+	if state == nil {
+		return dedupeAnnotations(annotations)
+	}
+	if state.EmittedAnnotationKeys == nil {
+		state.EmittedAnnotationKeys = make(map[string]struct{})
+	}
+	var filtered [][]byte
+	for _, annotation := range dedupeAnnotations(annotations) {
+		key := annotationKey(annotation)
+		if _, ok := state.EmittedAnnotationKeys[key]; ok {
+			continue
+		}
+		state.EmittedAnnotationKeys[key] = struct{}{}
+		filtered = append(filtered, annotation)
+	}
+	return filtered
+}
+
+func dedupeAnnotations(annotations [][]byte) [][]byte {
+	seen := map[string]struct{}{}
+	var out [][]byte
+	for _, annotation := range annotations {
+		if len(annotation) == 0 {
+			continue
+		}
+		key := annotationKey(annotation)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, annotation)
+	}
+	return out
+}
+
+func annotationKey(annotation []byte) string {
+	url := gjson.GetBytes(annotation, "url_citation.url").String()
+	if url != "" {
+		return url
+	}
+	return string(annotation)
+}
+
+func webSearchCallFromItem(item gjson.Result, index int) []byte {
+	call := []byte(`{"index":0,"id":"","type":"web_search_call","status":"","action":{}}`)
+	call, _ = sjson.SetBytes(call, "index", index)
+	call, _ = sjson.SetBytes(call, "id", item.Get("id").String())
+	call, _ = sjson.SetBytes(call, "status", item.Get("status").String())
+	if action := item.Get("action"); action.Exists() {
+		call, _ = sjson.SetRawBytes(call, "action", []byte(action.Raw))
+	}
+	if !gjson.GetBytes(call, "id").Exists() || gjson.GetBytes(call, "id").String() == "" {
+		call, _ = sjson.SetBytes(call, "id", fmt.Sprintf("web_search_%d", index))
+	}
+	return call
+}
+
+func setRawJSONArray(rawJSON []byte, path string, values [][]byte) []byte {
+	rawJSON, _ = sjson.SetRawBytes(rawJSON, path, []byte(`[]`))
+	for _, value := range values {
+		if len(value) == 0 {
+			continue
+		}
+		rawJSON, _ = sjson.SetRawBytes(rawJSON, path+".-1", value)
+	}
+	return rawJSON
 }
 
 func mimeTypeFromCodexOutputFormat(outputFormat string) string {
