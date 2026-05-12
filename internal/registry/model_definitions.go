@@ -87,13 +87,22 @@ func WithCodexBuiltins(models []*ModelInfo) []*ModelInfo {
 
 func codexBuiltinImageModelInfo() *ModelInfo {
 	return &ModelInfo{
-		ID:          codexBuiltinImageModelID,
-		Object:      "model",
-		Created:     1704067200, // 2024-01-01
-		OwnedBy:     "openai",
-		Type:        "openai",
-		DisplayName: "GPT Image 2",
-		Version:     codexBuiltinImageModelID,
+		ID:                  codexBuiltinImageModelID,
+		Object:              "model",
+		Created:             1704067200, // 2024-01-01
+		OwnedBy:             "openai",
+		Type:                "openai",
+		DisplayName:         "GPT Image 2",
+		Version:             codexBuiltinImageModelID,
+		Description:         "OpenAI image generation model.",
+		SupportedParameters: []string{"background", "moderation", "n", "output_compression", "output_format", "quality", "size"},
+		SupportedInputModalities: []string{
+			"text",
+			"image",
+		},
+		SupportedOutputModalities: []string{
+			"image",
+		},
 	}
 }
 
