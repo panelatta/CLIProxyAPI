@@ -92,3 +92,66 @@ func TestListAuthFiles_IncludesRecentRequestsBuckets(t *testing.T) {
 		}
 	}
 }
+
+func TestListAuthFiles_ExposesCodexAccountIDFromMetadata(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	gin.SetMode(gin.TestMode)
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	record := &coreauth.Auth{
+		ID:       "codex-auth-1.json",
+		Provider: "codex",
+		FileName: "codex-auth-1.json",
+		Attributes: map[string]string{
+			"path": "/tmp/codex-auth-1.json",
+		},
+		Metadata: map[string]any{
+			"type":       "codex",
+			"email":      "codex@example.com",
+			"account_id": "acct-chatgpt-1",
+		},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatalf("failed to register auth record: %v", errRegister)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, manager)
+	h.tokenStore = &memoryAuthStore{}
+
+	rec := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodGet, "/v0/management/auth-files", nil)
+	ginCtx.Request = req
+
+	h.ListAuthFiles(ginCtx)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected list status %d, got %d with body %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if errUnmarshal := json.Unmarshal(rec.Body.Bytes(), &payload); errUnmarshal != nil {
+		t.Fatalf("failed to decode list payload: %v", errUnmarshal)
+	}
+	filesRaw, ok := payload["files"].([]any)
+	if !ok || len(filesRaw) != 1 {
+		t.Fatalf("expected one files entry, payload: %#v", payload)
+	}
+	fileEntry, ok := filesRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected file entry object, got %#v", filesRaw[0])
+	}
+	if got := fileEntry["account_id"]; got != "acct-chatgpt-1" {
+		t.Fatalf("account_id = %#v, want acct-chatgpt-1", got)
+	}
+	if got := fileEntry["chatgpt_account_id"]; got != "acct-chatgpt-1" {
+		t.Fatalf("chatgpt_account_id = %#v, want acct-chatgpt-1", got)
+	}
+	idToken, ok := fileEntry["id_token"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected id_token object, got %#v", fileEntry["id_token"])
+	}
+	if got := idToken["chatgpt_account_id"]; got != "acct-chatgpt-1" {
+		t.Fatalf("id_token.chatgpt_account_id = %#v, want acct-chatgpt-1", got)
+	}
+}

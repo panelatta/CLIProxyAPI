@@ -394,6 +394,15 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	if email := authEmail(auth); email != "" {
 		entry["email"] = email
 	}
+	codexProvider := strings.EqualFold(strings.TrimSpace(auth.Provider), "codex")
+	codexChatGPTAccountID := ""
+	if codexProvider {
+		if accountID := codexAccountID(auth); accountID != "" {
+			codexChatGPTAccountID = accountID
+			entry["account_id"] = accountID
+			entry["chatgpt_account_id"] = accountID
+		}
+	}
 	if accountType, account := auth.AccountInfo(); accountType != "" || account != "" {
 		if accountType != "" {
 			entry["account_type"] = accountType
@@ -431,7 +440,16 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 			log.WithError(err).Warnf("failed to stat auth file %s", path)
 		}
 	}
-	if claims := extractCodexIDTokenClaims(auth); claims != nil {
+	claims := extractCodexIDTokenClaims(auth)
+	if codexProvider && codexChatGPTAccountID != "" {
+		if claims == nil {
+			claims = gin.H{}
+		}
+		if _, exists := claims["chatgpt_account_id"]; !exists {
+			claims["chatgpt_account_id"] = codexChatGPTAccountID
+		}
+	}
+	if claims != nil {
 		entry["id_token"] = claims
 	}
 	// Expose priority from Attributes (set by synthesizer from JSON "priority" field).
@@ -523,6 +541,29 @@ func authEmail(auth *coreauth.Auth) string {
 		}
 		if v := strings.TrimSpace(auth.Attributes["account_email"]); v != "" {
 			return v
+		}
+	}
+	return ""
+}
+
+func codexAccountID(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if auth.Metadata != nil {
+		for _, key := range []string{"chatgpt_account_id", "chatgptAccountId", "account_id", "accountId"} {
+			if v, ok := auth.Metadata[key].(string); ok {
+				if trimmed := strings.TrimSpace(v); trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+	}
+	if auth.Attributes != nil {
+		for _, key := range []string{"chatgpt_account_id", "chatgptAccountId", "account_id", "accountId"} {
+			if trimmed := strings.TrimSpace(auth.Attributes[key]); trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	return ""
