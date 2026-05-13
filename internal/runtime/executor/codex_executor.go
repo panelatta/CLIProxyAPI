@@ -35,6 +35,7 @@ const (
 	codexImageGenerationsURL   = "https://api.openai.com/v1/images/generations"
 	codexBackendDefaultBaseURL = "https://chatgpt.com/backend-api/codex"
 	codexDefaultImageToolModel = "gpt-image-2"
+	codexModelCapacityCooldown = 30 * time.Minute
 )
 
 var dataTag = []byte("data:")
@@ -907,13 +908,17 @@ func applyCodexHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, s
 
 func newCodexStatusErr(statusCode int, body []byte) statusErr {
 	errCode := statusCode
-	if isCodexModelCapacityError(body) {
+	capacityErr := isCodexModelCapacityError(body)
+	if capacityErr {
 		errCode = http.StatusTooManyRequests
 	}
 	body = classifyCodexStatusError(errCode, body)
 	err := statusErr{code: errCode, msg: string(body)}
 	if retryAfter := parseCodexRetryAfter(errCode, body, time.Now()); retryAfter != nil {
 		err.retryAfter = retryAfter
+	} else if capacityErr {
+		retryAfter := codexModelCapacityCooldown
+		err.retryAfter = &retryAfter
 	}
 	return err
 }

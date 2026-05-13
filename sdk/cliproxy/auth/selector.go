@@ -376,37 +376,9 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 		return true, blockReasonDisabled, time.Time{}
 	}
 	if model != "" {
-		if len(auth.ModelStates) > 0 {
-			state, ok := auth.ModelStates[model]
-			if (!ok || state == nil) && model != "" {
-				baseModel := canonicalModelKey(model)
-				if baseModel != "" && baseModel != model {
-					state, ok = auth.ModelStates[baseModel]
-				}
-			}
-			if ok && state != nil {
-				if state.Status == StatusDisabled {
-					return true, blockReasonDisabled, time.Time{}
-				}
-				if state.Unavailable {
-					if state.NextRetryAfter.IsZero() {
-						return false, blockReasonNone, time.Time{}
-					}
-					if state.NextRetryAfter.After(now) {
-						next := state.NextRetryAfter
-						if !state.Quota.NextRecoverAt.IsZero() && state.Quota.NextRecoverAt.After(now) {
-							next = state.Quota.NextRecoverAt
-						}
-						if next.Before(now) {
-							next = now
-						}
-						if state.Quota.Exceeded {
-							return true, blockReasonCooldown, next
-						}
-						return true, blockReasonOther, next
-					}
-				}
-				return false, blockReasonNone, time.Time{}
+		for _, state := range modelStatesForModel(auth, model) {
+			if blocked, reason, next := modelStateBlock(state, now); blocked {
+				return true, reason, next
 			}
 		}
 		return false, blockReasonNone, time.Time{}
@@ -425,6 +397,79 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 		return true, blockReasonOther, next
 	}
 	return false, blockReasonNone, time.Time{}
+}
+
+func modelStatesForModel(auth *Auth, model string) []*ModelState {
+	if auth == nil || len(auth.ModelStates) == 0 {
+		return nil
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+
+	states := make([]*ModelState, 0, 2)
+	seen := make(map[*ModelState]struct{}, 2)
+	add := func(state *ModelState) {
+		if state == nil {
+			return
+		}
+		if _, ok := seen[state]; ok {
+			return
+		}
+		seen[state] = struct{}{}
+		states = append(states, state)
+	}
+
+	add(auth.ModelStates[model])
+	baseModel := canonicalModelKey(model)
+	if baseModel != "" && baseModel != model {
+		add(auth.ModelStates[baseModel])
+	}
+	if baseModel == "" {
+		return states
+	}
+
+	keys := make([]string, 0, len(auth.ModelStates))
+	for key := range auth.ModelStates {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if canonicalModelKey(key) == baseModel {
+			add(auth.ModelStates[key])
+		}
+	}
+	return states
+}
+
+func modelStateBlock(state *ModelState, now time.Time) (bool, blockReason, time.Time) {
+	if state == nil {
+		return false, blockReasonNone, time.Time{}
+	}
+	if state.Status == StatusDisabled {
+		return true, blockReasonDisabled, time.Time{}
+	}
+	if !state.Unavailable {
+		return false, blockReasonNone, time.Time{}
+	}
+	if state.NextRetryAfter.IsZero() {
+		return false, blockReasonNone, time.Time{}
+	}
+	if !state.NextRetryAfter.After(now) {
+		return false, blockReasonNone, time.Time{}
+	}
+	next := state.NextRetryAfter
+	if !state.Quota.NextRecoverAt.IsZero() && state.Quota.NextRecoverAt.After(now) {
+		next = state.Quota.NextRecoverAt
+	}
+	if next.Before(now) {
+		next = now
+	}
+	if state.Quota.Exceeded {
+		return true, blockReasonCooldown, next
+	}
+	return true, blockReasonOther, next
 }
 
 // sessionPattern matches Claude Code user_id format:

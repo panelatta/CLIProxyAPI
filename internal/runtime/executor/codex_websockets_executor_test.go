@@ -420,6 +420,27 @@ func TestParseCodexWebsocketErrorUsesUsageLimitRetryMetadata(t *testing.T) {
 	}
 }
 
+func TestParseCodexWebsocketErrorTreatsCapacityAsQuotaCooldown(t *testing.T) {
+	err, ok := parseCodexWebsocketError([]byte(`{"type":"error","status":400,"body":{"error":{"message":"Selected model is at capacity. Please try a different model."}}}`))
+	if !ok {
+		t.Fatalf("expected websocket error")
+	}
+	status, ok := err.(interface{ StatusCode() int })
+	if !ok || status.StatusCode() != http.StatusTooManyRequests {
+		t.Fatalf("status = %#v, want 429", err)
+	}
+	retryable, ok := err.(interface{ RetryAfter() *time.Duration })
+	if !ok || retryable.RetryAfter() == nil {
+		t.Fatalf("expected retryable capacity websocket error")
+	}
+	if got := *retryable.RetryAfter(); got != codexModelCapacityCooldown {
+		t.Fatalf("retryAfter = %v, want %v", got, codexModelCapacityCooldown)
+	}
+	if got := gjson.Parse(err.Error()).Get("status").Int(); got != http.StatusTooManyRequests {
+		t.Fatalf("wrapped status = %d, want 429; payload=%s", got, err.Error())
+	}
+}
+
 func TestParseCodexWebsocketErrorPreservesWrappedBodyAndHeaders(t *testing.T) {
 	err, ok := parseCodexWebsocketError([]byte(`{"type":"error","status":429,"body":{"error":{"code":"websocket_connection_limit_reached","type":"server_error","message":"too many websocket connections"}},"headers":{"x-request-id":"req-1"}}`))
 	if !ok {

@@ -265,10 +265,10 @@ func (m *Manager) RefreshSchedulerEntry(authID string) {
 // ReconcileRegistryModelStates aligns per-model runtime state with the current
 // registry snapshot for one auth.
 //
-// Supported models are reset to a clean state because re-registration already
-// cleared the registry-side cooldown/suspension snapshot. ModelStates for
-// models that are no longer present in the registry are pruned entirely so
-// renamed/removed models cannot keep auth-level status stale.
+// Supported model states are retained so an auth reload or model re-registration
+// does not make a quota-exhausted credential immediately schedulable again.
+// ModelStates for models that are no longer present in the registry are pruned
+// entirely so renamed/removed models cannot keep auth-level status stale.
 func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID string) {
 	if m == nil || authID == "" {
 		return
@@ -288,6 +288,7 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 	}
 
 	var snapshot *Auth
+	var registryActions []modelRegistryReconcileAction
 	now := time.Now()
 
 	m.mu.Lock()
@@ -304,6 +305,9 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 				// snapshot. Keeping them around leaks stale errors into auth-level
 				// status, management output, and websocket fallback checks.
 				delete(auth.ModelStates, modelKey)
+				registryActions = append(registryActions, modelRegistryReconcileAction{
+					model: baseModel,
+				})
 				changed = true
 				continue
 			}
@@ -313,7 +317,18 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 			if modelStateIsClean(state) {
 				continue
 			}
+			if blocked, reason, _ := modelStateBlock(state, now); blocked {
+				registryActions = append(registryActions, modelRegistryReconcileAction{
+					model:         baseModel,
+					suspendReason: registrySuspendReasonForModelState(state, reason),
+					quotaExceeded: state.Quota.Exceeded,
+				})
+				continue
+			}
 			resetModelState(state, now)
+			registryActions = append(registryActions, modelRegistryReconcileAction{
+				model: baseModel,
+			})
 			changed = true
 		}
 		if len(auth.ModelStates) == 0 {
@@ -337,6 +352,50 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 
 	if m.scheduler != nil && snapshot != nil {
 		m.scheduler.upsertAuth(snapshot)
+	}
+	applyModelRegistryReconcileActions(authID, registryActions)
+}
+
+type modelRegistryReconcileAction struct {
+	model         string
+	suspendReason string
+	quotaExceeded bool
+}
+
+func registrySuspendReasonForModelState(state *ModelState, reason blockReason) string {
+	if state != nil && state.Quota.Exceeded {
+		return "quota"
+	}
+	switch reason {
+	case blockReasonDisabled:
+		return "disabled"
+	case blockReasonCooldown:
+		return "quota"
+	default:
+		return "unavailable"
+	}
+}
+
+func applyModelRegistryReconcileActions(authID string, actions []modelRegistryReconcileAction) {
+	authID = strings.TrimSpace(authID)
+	if authID == "" || len(actions) == 0 {
+		return
+	}
+	registryRef := registry.GetGlobalRegistry()
+	for _, action := range actions {
+		model := strings.TrimSpace(action.model)
+		if model == "" {
+			continue
+		}
+		if action.suspendReason == "" {
+			registryRef.ClearModelQuotaExceeded(authID, model)
+			registryRef.ResumeClientModel(authID, model)
+			continue
+		}
+		if action.quotaExceeded {
+			registryRef.SetModelQuotaExceeded(authID, model)
+		}
+		registryRef.SuspendClientModel(authID, model, action.suspendReason)
 	}
 }
 

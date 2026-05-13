@@ -151,6 +151,43 @@ func TestSchedulerPick_PromotesExpiredCooldownBeforePick(t *testing.T) {
 	}
 }
 
+func TestSchedulerPick_UsesCanonicalModelStateCooldown(t *testing.T) {
+	t.Parallel()
+
+	model := "gpt-5.5"
+	registerSchedulerModels(t, "codex", model, "cooldown-suffix", "ready")
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{
+			ID:       "cooldown-suffix",
+			Provider: "codex",
+			ModelStates: map[string]*ModelState{
+				model + "(high)": {
+					Status:         StatusError,
+					Unavailable:    true,
+					NextRetryAfter: time.Now().Add(30 * time.Minute),
+					Quota: QuotaState{
+						Exceeded:      true,
+						NextRecoverAt: time.Now().Add(30 * time.Minute),
+					},
+				},
+			},
+		},
+		&Auth{ID: "ready", Provider: "codex"},
+	)
+
+	got, errPick := scheduler.pickSingle(context.Background(), "codex", model, cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("pickSingle() error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatalf("pickSingle() auth = nil")
+	}
+	if got.ID != "ready" {
+		t.Fatalf("pickSingle() auth.ID = %q, want ready", got.ID)
+	}
+}
+
 func TestSchedulerPick_GeminiVirtualParentUsesTwoLevelRotation(t *testing.T) {
 	t.Parallel()
 

@@ -1057,12 +1057,20 @@ func parseCodexWebsocketError(payload []byte) (error, bool) {
 	}
 
 	out := buildCodexWebsocketErrorPayload(payload, status)
+	capacityErr := isCodexModelCapacityError(out)
+	if capacityErr {
+		status = http.StatusTooManyRequests
+		out, _ = sjson.SetBytes(out, "status", status)
+	}
 	headers := parseCodexWebsocketErrorHeaders(payload)
 	statusError := statusErr{code: status, msg: string(out)}
 	if retryAfter := parseCodexRetryAfter(status, out, time.Now()); retryAfter != nil {
 		statusError.retryAfter = retryAfter
 	} else if isCodexWebsocketConnectionLimitError(payload) {
 		retryAfter := time.Duration(0)
+		statusError.retryAfter = &retryAfter
+	} else if capacityErr {
+		retryAfter := codexModelCapacityCooldown
 		statusError.retryAfter = &retryAfter
 	}
 	return statusErrWithHeaders{
