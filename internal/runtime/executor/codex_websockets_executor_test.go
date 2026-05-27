@@ -20,6 +20,21 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestShouldFallbackCodexWebsocketStream(t *testing.T) {
+	if !shouldFallbackCodexWebsocketStream(context.Background(), statusErr{code: http.StatusNotFound, msg: "not found"}) {
+		t.Fatal("expected websocket not-found to fall back to HTTP")
+	}
+	if shouldFallbackCodexWebsocketStream(context.Background(), statusErr{code: http.StatusTooManyRequests, msg: "rate limited"}) {
+		t.Fatal("did not expect rate limit errors to fall back to HTTP")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if shouldFallbackCodexWebsocketStream(ctx, errors.New("dial failed")) {
+		t.Fatal("did not expect canceled contexts to fall back")
+	}
+}
+
 func TestBuildCodexWebsocketRequestBodyPreservesPreviousResponseID(t *testing.T) {
 	body := []byte(`{"model":"gpt-5-codex","previous_response_id":"resp-1","input":[{"type":"message","id":"msg-1"}]}`)
 

@@ -38,6 +38,25 @@ const (
 	codexModelCapacityCooldown = 30 * time.Minute
 )
 
+func codexStreamTraceHeaderFields(headers http.Header) log.Fields {
+	fields := log.Fields{}
+	if headers == nil {
+		return fields
+	}
+	for field, header := range map[string]string{
+		"upstream_cf_ray":       "Cf-Ray",
+		"upstream_x_request_id": "X-Request-Id",
+		"upstream_request_id":   "Request-Id",
+		"upstream_via":          "Via",
+		"upstream_server":       "Server",
+	} {
+		if value := strings.TrimSpace(headers.Get(header)); value != "" {
+			fields[field] = value
+		}
+	}
+	return fields
+}
+
 var dataTag = []byte("data:")
 
 // Streamed Codex responses may emit response.output_item.done events while leaving
@@ -568,6 +587,42 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				log.Errorf("codex executor: close response body error: %v", errClose)
 			}
 		}()
+		startedAt := time.Now()
+		lastUpstreamChunkAt := time.Time{}
+		upstreamChunkCount := 0
+		seenCompleted := false
+		var streamErr error
+		defer func() {
+			ctxErr := error(nil)
+			if ctx != nil {
+				ctxErr = ctx.Err()
+			}
+			if seenCompleted && streamErr == nil && ctxErr == nil {
+				return
+			}
+			fields := log.Fields{
+				"model":                   baseModel,
+				"auth_id":                 authID,
+				"upstream_url":            url,
+				"seen_response_completed": seenCompleted,
+				"upstream_chunk_count":    upstreamChunkCount,
+				"duration_ms":             time.Since(startedAt).Milliseconds(),
+			}
+			for key, value := range codexStreamTraceHeaderFields(httpResp.Header) {
+				fields[key] = value
+			}
+			if !lastUpstreamChunkAt.IsZero() {
+				fields["last_upstream_chunk_at"] = lastUpstreamChunkAt.Format(time.RFC3339Nano)
+				fields["idle_since_last_chunk_ms"] = time.Since(lastUpstreamChunkAt).Milliseconds()
+			}
+			if streamErr != nil {
+				fields["stream_error"] = streamErr.Error()
+			}
+			if ctxErr != nil {
+				fields["context_error"] = ctxErr.Error()
+			}
+			helps.LogWithRequestID(ctx).WithFields(fields).Warn("codex stream ended before response.completed")
+		}()
 		scanner := bufio.NewScanner(httpResp.Body)
 		scanner.Buffer(nil, 52_428_800) // 50MB
 		var param any
@@ -575,6 +630,8 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		var outputItemsFallback [][]byte
 		for scanner.Scan() {
 			line := scanner.Bytes()
+			lastUpstreamChunkAt = time.Now()
+			upstreamChunkCount++
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
 			translatedLine := bytes.Clone(line)
 
@@ -584,6 +641,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				case "response.output_item.done":
 					collectCodexOutputItemDone(data, outputItemsByIndex, &outputItemsFallback)
 				case "response.completed":
+					seenCompleted = true
 					if detail, ok := helps.ParseCodexUsage(data); ok {
 						reporter.Publish(ctx, detail)
 					}
@@ -598,15 +656,27 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				select {
 				case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
 				case <-ctx.Done():
+					streamErr = ctx.Err()
 					return
 				}
 			}
 		}
 		if errScan := scanner.Err(); errScan != nil {
+			streamErr = errScan
 			helps.RecordAPIResponseError(ctx, e.cfg, errScan)
 			reporter.PublishFailure(ctx, errScan)
 			select {
 			case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
+			case <-ctx.Done():
+			}
+			return
+		}
+		if !seenCompleted {
+			streamErr = statusErr{code: http.StatusRequestTimeout, msg: "codex stream closed before response.completed"}
+			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+			reporter.PublishFailure(ctx, streamErr)
+			select {
+			case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
 			case <-ctx.Done():
 			}
 		}

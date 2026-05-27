@@ -35,7 +35,7 @@ import (
 
 const (
 	codexResponsesWebsocketBetaHeaderValue = "responses_websockets=2026-02-06"
-	codexResponsesWebsocketIdleTimeout     = 5 * time.Minute
+	codexResponsesWebsocketIdleTimeout     = 30 * time.Minute
 	codexResponsesWebsocketHandshakeTO     = 30 * time.Second
 )
 
@@ -1557,11 +1557,10 @@ func CloseCodexWebsocketSessionsForAuthID(authID string, reason string) {
 	}
 }
 
-// CodexAutoExecutor routes Codex requests to the websocket transport only when:
-//  1. The downstream transport is websocket, and
-//  2. The selected auth enables websockets.
+// CodexAutoExecutor routes Codex stream requests to the websocket transport when
+// the selected auth enables websockets.
 //
-// For non-websocket downstream requests, it always uses the legacy HTTP implementation.
+// For unsupported websocket upgrades, it falls back to the legacy HTTP implementation.
 type CodexAutoExecutor struct {
 	httpExec *CodexExecutor
 	wsExec   *CodexWebsocketsExecutor
@@ -1604,10 +1603,36 @@ func (e *CodexAutoExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 	if e == nil || e.httpExec == nil || e.wsExec == nil {
 		return nil, fmt.Errorf("codex auto executor: executor is nil")
 	}
-	if cliproxyexecutor.DownstreamWebsocket(ctx) && codexWebsocketsEnabled(auth) {
-		return e.wsExec.ExecuteStream(ctx, auth, req, opts)
+	if codexWebsocketsEnabled(auth) {
+		result, err := e.wsExec.ExecuteStream(ctx, auth, req, opts)
+		if err == nil {
+			return result, nil
+		}
+		if shouldFallbackCodexWebsocketStream(ctx, err) {
+			helps.LogWithRequestID(ctx).WithError(err).Warn("codex websocket stream unavailable; falling back to HTTP stream")
+			return e.httpExec.ExecuteStream(ctx, auth, req, opts)
+		}
+		return nil, err
 	}
 	return e.httpExec.ExecuteStream(ctx, auth, req, opts)
+}
+
+func shouldFallbackCodexWebsocketStream(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	if se, ok := err.(interface{ StatusCode() int }); ok && se != nil {
+		switch se.StatusCode() {
+		case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusUpgradeRequired, http.StatusNotImplemented:
+			return true
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (e *CodexAutoExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*cliproxyauth.Auth, error) {
