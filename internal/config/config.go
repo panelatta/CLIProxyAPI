@@ -553,6 +553,12 @@ type OpenAICompatibility struct {
 
 	// DisableCooling disables auth/model cooldown scheduling for this provider when true.
 	DisableCooling bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
+
+	// ResponsesPassthrough allows selected OpenAI-compatible providers to receive
+	// OpenAI Responses API requests directly at /responses instead of translating
+	// them to /chat/completions. Only enable this for providers known to support
+	// Responses background retrieve/resume.
+	ResponsesPassthrough bool `yaml:"responses-passthrough,omitempty" json:"responses-passthrough,omitempty"`
 }
 
 // OpenAICompatibilityAPIKey represents an API key configuration with optional proxy setting.

@@ -646,3 +646,69 @@ func TestConfigSynthesizer_AllProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigSynthesizer_OpenAICompatResponsesPassthroughAttribute(t *testing.T) {
+	synth := NewConfigSynthesizer()
+	ctx := &SynthesisContext{
+		Config: &config.Config{
+			OpenAICompatibility: []config.OpenAICompatibility{
+				{
+					Name:                 "openai-platform",
+					BaseURL:              "https://api.openai.com/v1",
+					ResponsesPassthrough: true,
+					APIKeyEntries: []config.OpenAICompatibilityAPIKey{
+						{APIKey: "sk-test"},
+					},
+				},
+				{
+					Name:    "right-codes",
+					BaseURL: "https://right.codes/v1",
+				},
+			},
+		},
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(auths) != 2 {
+		t.Fatalf("auths len = %d, want 2", len(auths))
+	}
+	if got := auths[0].Attributes["responses_passthrough"]; got != "true" {
+		t.Fatalf("responses_passthrough attr = %q, want true", got)
+	}
+	if _, ok := auths[1].Attributes["responses_passthrough"]; ok {
+		t.Fatalf("responses_passthrough should be absent by default: %v", auths[1].Attributes)
+	}
+}
+
+func TestConfigSynthesizer_OpenAICompatResponsesPassthroughFallbackAuth(t *testing.T) {
+	synth := NewConfigSynthesizer()
+	ctx := &SynthesisContext{
+		Config: &config.Config{
+			OpenAICompatibility: []config.OpenAICompatibility{
+				{
+					Name:                 "openai-platform",
+					BaseURL:              "https://api.openai.com/v1",
+					ResponsesPassthrough: true,
+				},
+			},
+		},
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("auths len = %d, want 1", len(auths))
+	}
+	if got := auths[0].Attributes["responses_passthrough"]; got != "true" {
+		t.Fatalf("responses_passthrough attr = %q, want true", got)
+	}
+}

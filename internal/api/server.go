@@ -404,6 +404,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
 		v1.GET("/responses", openaiResponsesHandlers.ResponsesWebsocket)
+		v1.GET("/responses/:response_id", openaiResponsesHandlers.GetResponse)
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
 	}
@@ -413,6 +414,7 @@ func (s *Server) setupRoutes() {
 	codexDirect.Use(AuthMiddleware(s.accessManager))
 	{
 		codexDirect.GET("/responses", openaiResponsesHandlers.ResponsesWebsocket)
+		codexDirect.GET("/responses/:response_id", openaiResponsesHandlers.GetResponse)
 		codexDirect.POST("/responses", openaiResponsesHandlers.Responses)
 		codexDirect.POST("/responses/compact", openaiResponsesHandlers.Compact)
 	}

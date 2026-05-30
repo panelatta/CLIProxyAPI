@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -43,6 +44,12 @@ type ProviderExecutor interface {
 	// HttpRequest injects provider credentials into the supplied HTTP request and executes it.
 	// Callers must close the response body when non-nil.
 	HttpRequest(ctx context.Context, auth *Auth, req *http.Request) (*http.Response, error)
+}
+
+// ResponsesHTTPRequester is implemented by executors that can retrieve or
+// resume an upstream OpenAI Responses object by response id.
+type ResponsesHTTPRequester interface {
+	ResponsesHTTPRequest(ctx context.Context, auth *Auth, responseID string, query url.Values) (*http.Response, error)
 }
 
 // ExecutionSessionCloser allows executors to release per-session runtime resources.
@@ -2645,6 +2652,10 @@ func isRequestScopedNotFoundResultError(err *Error) bool {
 	return isRequestScopedNotFoundMessage(err.Message)
 }
 
+type noAuthRetryError interface {
+	NoAuthRetry() bool
+}
+
 // isRequestInvalidError returns true if the error represents a client request
 // error that should not be retried. Specifically, it treats 400 responses with
 // "invalid_request_error", request-scoped 404 item misses caused by `store=false`,
@@ -2654,6 +2665,10 @@ func isRequestScopedNotFoundResultError(err *Error) bool {
 func isRequestInvalidError(err error) bool {
 	if err == nil {
 		return false
+	}
+	var noRetry noAuthRetryError
+	if errors.As(err, &noRetry) && noRetry.NoAuthRetry() {
+		return true
 	}
 	if isModelSupportError(err) {
 		return false
@@ -4235,4 +4250,32 @@ func (m *Manager) HttpRequest(ctx context.Context, auth *Auth, req *http.Request
 		return nil, &Error{Code: "provider_not_found", Message: "executor not registered for provider: " + providerKey}
 	}
 	return exec.HttpRequest(ctx, auth, req)
+}
+
+// ResponsesHTTPRequest retrieves or resumes an upstream Responses API object
+// using the executor bound to the supplied auth.
+func (m *Manager) ResponsesHTTPRequest(ctx context.Context, auth *Auth, responseID string, query url.Values) (*http.Response, error) {
+	if m == nil {
+		return nil, &Error{Code: "provider_not_found", Message: "manager is nil"}
+	}
+	if auth == nil {
+		return nil, &Error{Code: "auth_not_found", Message: "auth is nil"}
+	}
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		return nil, &Error{Code: "invalid_request", Message: "response id is empty"}
+	}
+	providerKey := executorKeyFromAuth(auth)
+	if providerKey == "" {
+		return nil, &Error{Code: "provider_not_found", Message: "auth provider is empty"}
+	}
+	exec := m.executorFor(providerKey)
+	if exec == nil {
+		return nil, &Error{Code: "provider_not_found", Message: "executor not registered for provider: " + providerKey}
+	}
+	requester, ok := exec.(ResponsesHTTPRequester)
+	if !ok || requester == nil {
+		return nil, &Error{Code: "not_supported", Message: "executor does not support Responses retrieve/resume"}
+	}
+	return requester.ResponsesHTTPRequest(ctx, auth, responseID, query)
 }

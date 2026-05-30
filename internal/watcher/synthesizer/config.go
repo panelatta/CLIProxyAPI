@@ -243,6 +243,9 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 				"compat_name":  compat.Name,
 				"provider_key": providerName,
 			}
+			if compat.ResponsesPassthrough {
+				attrs["responses_passthrough"] = "true"
+			}
 			metadata := map[string]any{}
 			if disableCooling {
 				metadata["disable_cooling"] = true
@@ -284,6 +287,9 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 				"base_url":     base,
 				"compat_name":  compat.Name,
 				"provider_key": providerName,
+			}
+			if compat.ResponsesPassthrough {
+				attrs["responses_passthrough"] = "true"
 			}
 			metadata := map[string]any{}
 			if disableCooling {

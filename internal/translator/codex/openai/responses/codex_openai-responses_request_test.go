@@ -364,3 +364,48 @@ func TestTruncationRemovedForCodexCompatibility(t *testing.T) {
 		t.Fatalf("truncation should be removed for Codex compatibility")
 	}
 }
+
+func TestConvertOpenAIResponsesRequestToCodex_PreservesBackgroundStore(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.5",
+		"input": "long task",
+		"background": true,
+		"stream": true,
+		"store": true
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.5", inputJSON, true)
+
+	if !gjson.GetBytes(output, "background").Bool() {
+		t.Fatalf("background was not preserved: %s", output)
+	}
+	if !gjson.GetBytes(output, "store").Bool() {
+		t.Fatalf("store was not preserved for background response: %s", output)
+	}
+	if !gjson.GetBytes(output, "stream").Bool() {
+		t.Fatalf("stream should remain true: %s", output)
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToCodex_PreservesExplicitStoreWithoutBackground(t *testing.T) {
+	inputJSON := []byte(`{"model":"gpt-5.5","input":"long task","background":false,"store":true}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.5", inputJSON, true)
+
+	if !gjson.GetBytes(output, "store").Bool() {
+		t.Fatalf("explicit store=true should be preserved: %s", output)
+	}
+	if !gjson.GetBytes(output, "stream").Bool() {
+		t.Fatalf("stream should remain true: %s", output)
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToCodex_DefaultsStoreFalse(t *testing.T) {
+	inputJSON := []byte(`{"model":"gpt-5.5","input":"ordinary task"}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.5", inputJSON, true)
+
+	if gjson.GetBytes(output, "store").Bool() {
+		t.Fatalf("ordinary request should keep store=false: %s", output)
+	}
+}

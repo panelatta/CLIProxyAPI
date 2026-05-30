@@ -14,6 +14,8 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -51,6 +53,7 @@ type responsesSSEFramer struct {
 	outputItems          map[int][]byte
 	outputOrder          []int
 	unindexedOutputItems [][]byte
+	observePayload       func([]byte)
 }
 
 func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
@@ -105,6 +108,10 @@ func (f *responsesSSEFramer) repairFrame(frame []byte) []byte {
 	payload, ok := responsesSSEDataPayload(frame)
 	if !ok || len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) || !json.Valid(payload) {
 		return frame
+	}
+
+	if f.observePayload != nil {
+		f.observePayload(payload)
 	}
 
 	switch gjson.GetBytes(payload, "type").String() {
@@ -326,6 +333,7 @@ func responsesSSENeedsLineBreak(pending, chunk []byte) bool {
 // It holds a pool of clients to interact with the backend service.
 type OpenAIResponsesAPIHandler struct {
 	*handlers.BaseAPIHandler
+	responseRoutes *responsesRouteStore
 }
 
 // NewOpenAIResponsesAPIHandler creates a new OpenAIResponses API handlers instance.
@@ -339,12 +347,73 @@ type OpenAIResponsesAPIHandler struct {
 func NewOpenAIResponsesAPIHandler(apiHandlers *handlers.BaseAPIHandler) *OpenAIResponsesAPIHandler {
 	return &OpenAIResponsesAPIHandler{
 		BaseAPIHandler: apiHandlers,
+		responseRoutes: newResponsesRouteStore(defaultResponsesRouteCacheTTL),
 	}
 }
 
 // HandlerType returns the identifier for this handler implementation.
 func (h *OpenAIResponsesAPIHandler) HandlerType() string {
 	return OpenaiResponse
+}
+
+func responsesShouldRememberRoute(rawJSON []byte) bool {
+	return gjson.GetBytes(rawJSON, "background").Bool() || gjson.GetBytes(rawJSON, "store").Bool()
+}
+
+func responsesPayloadResponseID(payload []byte) string {
+	for _, path := range []string{"response.id", "response_id", "id"} {
+		if value := strings.TrimSpace(gjson.GetBytes(payload, path).String()); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (h *OpenAIResponsesAPIHandler) responseRouteRecordableAuth(authID string) bool {
+	if h == nil || h.AuthManager == nil {
+		return false
+	}
+	auth, ok := h.AuthManager.GetByID(authID)
+	if !ok || auth == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+		return true
+	}
+	if auth.Attributes != nil && strings.EqualFold(strings.TrimSpace(auth.Attributes["responses_passthrough"]), "true") {
+		return true
+	}
+	return false
+}
+
+func (h *OpenAIResponsesAPIHandler) rememberResponseRoute(c *gin.Context, responseID string, tracker *selectedAuthTracker) {
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" || h == nil || h.responseRoutes == nil {
+		return
+	}
+	authID := tracker.Get()
+	if authID == "" || !h.responseRouteRecordableAuth(authID) {
+		return
+	}
+	h.responseRoutes.Remember(responseID, authID, responsesRouteOwner(c), time.Now())
+}
+
+func (h *OpenAIResponsesAPIHandler) observeResponseRoutePayload(c *gin.Context, tracker *selectedAuthTracker, enabled bool) func([]byte) {
+	if !enabled {
+		return nil
+	}
+	remembered := false
+	return func(payload []byte) {
+		if remembered {
+			return
+		}
+		responseID := responsesPayloadResponseID(payload)
+		if responseID == "" {
+			return
+		}
+		h.rememberResponseRoute(c, responseID, tracker)
+		remembered = true
+	}
 }
 
 // Models returns the OpenAIResponses-compatible model metadata supported by this handler.
@@ -397,6 +466,88 @@ func (h *OpenAIResponsesAPIHandler) Responses(c *gin.Context) {
 		h.handleNonStreamingResponse(c, rawJSON, usedFileIDs)
 	}
 
+}
+
+// GetResponse retrieves or resumes a stored/background OpenAI Responses object.
+func (h *OpenAIResponsesAPIHandler) GetResponse(c *gin.Context) {
+	responseID := strings.TrimSpace(c.Param("response_id"))
+	if responseID == "" {
+		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: "response id is required",
+				Type:    "invalid_request_error",
+			},
+		})
+		return
+	}
+	if value := strings.TrimSpace(c.Query("starting_after")); value != "" {
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || n < 0 {
+			c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+				Error: handlers.ErrorDetail{
+					Message: "starting_after must be a non-negative integer",
+					Type:    "invalid_request_error",
+				},
+			})
+			return
+		}
+	}
+	if h == nil || h.AuthManager == nil || h.responseRoutes == nil {
+		c.JSON(http.StatusNotFound, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: "response route cache is unavailable",
+				Type:    "invalid_request_error",
+				Code:    "response_not_found",
+			},
+		})
+		return
+	}
+
+	route, ok := h.responseRoutes.Get(responseID, responsesRouteOwner(c), time.Now())
+	if !ok {
+		c.JSON(http.StatusNotFound, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: "response id is not known to this proxy or the route entry expired",
+				Type:    "invalid_request_error",
+				Code:    "response_not_found",
+			},
+		})
+		return
+	}
+
+	auth, ok := h.AuthManager.GetByID(route.AuthID)
+	if !ok || auth == nil {
+		c.JSON(http.StatusNotFound, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: "response route auth is no longer available",
+				Type:    "invalid_request_error",
+				Code:    "response_not_found",
+			},
+		})
+		return
+	}
+
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+
+	upstreamResp, err := h.AuthManager.ResponsesHTTPRequest(cliCtx, auth, responseID, c.Request.URL.Query())
+	if err != nil {
+		c.JSON(http.StatusBadGateway, handlers.ErrorResponse{
+			Error: handlers.ErrorDetail{
+				Message: err.Error(),
+				Type:    "server_error",
+			},
+		})
+		cliCancel(err)
+		return
+	}
+	defer func() {
+		if upstreamResp != nil && upstreamResp.Body != nil {
+			_ = upstreamResp.Body.Close()
+		}
+	}()
+
+	h.writeUpstreamResponsesHTTPResponse(c, upstreamResp)
+	cliCancel()
 }
 
 func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
@@ -466,6 +617,61 @@ func writeResponsesStreamTerminalError(c *gin.Context, errMsg *interfaces.ErrorM
 	_, _ = fmt.Fprintf(c.Writer, "\nevent: error\ndata: %s\n\n", string(chunk))
 }
 
+func (h *OpenAIResponsesAPIHandler) writeUpstreamResponsesHTTPResponse(c *gin.Context, upstreamResp *http.Response) {
+	if c == nil || upstreamResp == nil {
+		return
+	}
+	filteredHeaders := handlers.FilterUpstreamHeaders(upstreamResp.Header)
+	contentType := strings.ToLower(upstreamResp.Header.Get("Content-Type"))
+	isStream := upstreamResp.StatusCode < http.StatusBadRequest && strings.Contains(contentType, "text/event-stream")
+
+	if isStream {
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, handlers.ErrorResponse{
+				Error: handlers.ErrorDetail{
+					Message: "Streaming not supported",
+					Type:    "server_error",
+				},
+			})
+			return
+		}
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("Access-Control-Allow-Origin", "*")
+		handlers.WriteUpstreamHeaders(c.Writer.Header(), filteredHeaders)
+		c.Status(upstreamResp.StatusCode)
+
+		buf := make([]byte, 32*1024)
+		for {
+			n, readErr := upstreamResp.Body.Read(buf)
+			if n > 0 {
+				_, _ = c.Writer.Write(buf[:n])
+				flusher.Flush()
+			}
+			if readErr != nil {
+				if readErr != io.EOF {
+					_, _ = fmt.Fprintf(c.Writer, "\nevent: error\ndata: %s\n\n", handlers.BuildOpenAIResponsesStreamErrorChunk(http.StatusBadGateway, readErr.Error(), 0))
+					flusher.Flush()
+				}
+				return
+			}
+		}
+	}
+
+	handlers.WriteUpstreamHeaders(c.Writer.Header(), filteredHeaders)
+	if c.Writer.Header().Get("Content-Type") == "" {
+		if upstreamType := upstreamResp.Header.Get("Content-Type"); upstreamType != "" {
+			c.Header("Content-Type", upstreamType)
+		} else {
+			c.Header("Content-Type", "application/json")
+		}
+	}
+	c.Status(upstreamResp.StatusCode)
+	_, _ = io.Copy(c.Writer, upstreamResp.Body)
+}
+
 // handleNonStreamingResponse handles non-streaming chat completion responses
 // for Gemini models. It selects a client from the pool, sends the request, and
 // aggregates the response before sending it back to the client in OpenAIResponses format.
@@ -478,6 +684,8 @@ func (h *OpenAIResponsesAPIHandler) handleNonStreamingResponse(c *gin.Context, r
 
 	modelName := gjson.GetBytes(rawJSON, "model").String()
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	selectedAuth := &selectedAuthTracker{}
+	cliCtx = handlers.WithSelectedAuthIDCallback(cliCtx, selectedAuth.Set)
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
 
 	resp, upstreamHeaders, errMsg := h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "")
@@ -486,6 +694,9 @@ func (h *OpenAIResponsesAPIHandler) handleNonStreamingResponse(c *gin.Context, r
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
 		return
+	}
+	if responsesShouldRememberRoute(rawJSON) {
+		h.rememberResponseRoute(c, responsesPayloadResponseID(resp), selectedAuth)
 	}
 	cleanupUploadedFilesAfterSuccess(h.UploadedFileStore, usedFileIDs)
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
@@ -516,6 +727,8 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 	// New core execution path
 	modelName := gjson.GetBytes(rawJSON, "model").String()
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	selectedAuth := &selectedAuthTracker{}
+	cliCtx = handlers.WithSelectedAuthIDCallback(cliCtx, selectedAuth.Set)
 	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "")
 
 	finishStream := func(err error) {
@@ -531,7 +744,9 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 		c.Header("Connection", "keep-alive")
 		c.Header("Access-Control-Allow-Origin", "*")
 	}
-	framer := &responsesSSEFramer{}
+	framer := &responsesSSEFramer{
+		observePayload: h.observeResponseRoutePayload(c, selectedAuth, responsesShouldRememberRoute(rawJSON)),
+	}
 	headersSent := false
 	sendHeaders := func() {
 		if headersSent {
