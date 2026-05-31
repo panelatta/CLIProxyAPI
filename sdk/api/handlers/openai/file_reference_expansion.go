@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	internalfiles "github.com/router-for-me/CLIProxyAPI/v6/internal/files"
-	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
+	internalfiles "github.com/router-for-me/CLIProxyAPI/v7/internal/files"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	log "github.com/sirupsen/logrus"
 )
 

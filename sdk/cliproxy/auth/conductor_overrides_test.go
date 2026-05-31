@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
 const requestScopedNotFoundMessage = "Item with id 'rs_0b5f3eb6f51f175c0169ca74e4a85881998539920821603a74' not found. Items are not persisted when `store` is set to false. Try again with `store` set to true, or remove this item from your input."
@@ -479,6 +479,146 @@ func TestManagerExecuteStream_ModelSupportBadRequestFallsBackAndSuspendsAuth(t *
 	}
 	if state.NextRetryAfter.IsZero() {
 		t.Fatalf("expected bad auth model state cooldown to be set")
+	}
+}
+
+func TestManager_CodexCapacityErrorFallsBackToOtherAuth(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	executor := &authFallbackExecutor{
+		id: "codex",
+		executeErrors: map[string]error{
+			"aa-capacity-auth": &Error{
+				HTTPStatus: http.StatusBadRequest,
+				Message:    "invalid_request_error: Selected model is at capacity. Please try a different model.",
+			},
+		},
+	}
+	m.RegisterExecutor(executor)
+
+	model := "gpt-5.1-codex"
+	capacityAuth := &Auth{ID: "aa-capacity-auth", Provider: "codex"}
+	goodAuth := &Auth{ID: "bb-good-auth", Provider: "codex"}
+
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(capacityAuth.ID, "codex", []*registry.ModelInfo{{ID: model}})
+	reg.RegisterClient(goodAuth.ID, "codex", []*registry.ModelInfo{{ID: model}})
+	t.Cleanup(func() {
+		reg.UnregisterClient(capacityAuth.ID)
+		reg.UnregisterClient(goodAuth.ID)
+	})
+
+	if _, errRegister := m.Register(context.Background(), capacityAuth); errRegister != nil {
+		t.Fatalf("register capacity auth: %v", errRegister)
+	}
+	if _, errRegister := m.Register(context.Background(), goodAuth); errRegister != nil {
+		t.Fatalf("register good auth: %v", errRegister)
+	}
+
+	resp, errExecute := m.Execute(context.Background(), []string{"codex"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{})
+	if errExecute != nil {
+		t.Fatalf("execute error = %v, want success", errExecute)
+	}
+	if string(resp.Payload) != goodAuth.ID {
+		t.Fatalf("execute payload = %q, want %q", string(resp.Payload), goodAuth.ID)
+	}
+
+	got := executor.ExecuteCalls()
+	want := []string{capacityAuth.ID, goodAuth.ID}
+	if len(got) != len(want) {
+		t.Fatalf("execute calls = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("execute call %d auth = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	assertCodexCapacityCooldown(t, m, capacityAuth.ID, model)
+}
+
+func TestManagerExecuteStream_CodexCapacityBootstrapErrorFallsBackToOtherAuth(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	executor := &authFallbackExecutor{
+		id: "codex",
+		streamFirstErrors: map[string]error{
+			"aa-capacity-auth": &Error{
+				HTTPStatus: http.StatusBadRequest,
+				Message:    "invalid_request_error: Selected model is at capacity. Please try a different model.",
+			},
+		},
+	}
+	m.RegisterExecutor(executor)
+
+	model := "gpt-5.1-codex"
+	capacityAuth := &Auth{ID: "aa-capacity-auth", Provider: "codex"}
+	goodAuth := &Auth{ID: "bb-good-auth", Provider: "codex"}
+
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(capacityAuth.ID, "codex", []*registry.ModelInfo{{ID: model}})
+	reg.RegisterClient(goodAuth.ID, "codex", []*registry.ModelInfo{{ID: model}})
+	t.Cleanup(func() {
+		reg.UnregisterClient(capacityAuth.ID)
+		reg.UnregisterClient(goodAuth.ID)
+	})
+
+	if _, errRegister := m.Register(context.Background(), capacityAuth); errRegister != nil {
+		t.Fatalf("register capacity auth: %v", errRegister)
+	}
+	if _, errRegister := m.Register(context.Background(), goodAuth); errRegister != nil {
+		t.Fatalf("register good auth: %v", errRegister)
+	}
+
+	streamResult, errExecute := m.ExecuteStream(context.Background(), []string{"codex"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{})
+	if errExecute != nil {
+		t.Fatalf("execute stream error = %v, want success", errExecute)
+	}
+	var payload []byte
+	for chunk := range streamResult.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("execute stream chunk error = %v, want success", chunk.Err)
+		}
+		payload = append(payload, chunk.Payload...)
+	}
+	if string(payload) != goodAuth.ID {
+		t.Fatalf("execute stream payload = %q, want %q", string(payload), goodAuth.ID)
+	}
+
+	got := executor.StreamCalls()
+	want := []string{capacityAuth.ID, goodAuth.ID}
+	if len(got) != len(want) {
+		t.Fatalf("stream calls = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("stream call %d auth = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	assertCodexCapacityCooldown(t, m, capacityAuth.ID, model)
+}
+
+func assertCodexCapacityCooldown(t *testing.T, m *Manager, authID, model string) {
+	t.Helper()
+
+	updated, ok := m.GetByID(authID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth %q to remain registered", authID)
+	}
+	state := updated.ModelStates[model]
+	if state == nil {
+		t.Fatalf("expected model state for %q", model)
+	}
+	if !state.Unavailable {
+		t.Fatalf("expected capacity auth model state to be unavailable")
+	}
+	if state.NextRetryAfter.IsZero() {
+		t.Fatalf("expected capacity auth model state cooldown to be set")
+	}
+	if !state.Quota.Exceeded {
+		t.Fatalf("expected capacity auth quota state to be exceeded")
+	}
+	if state.Quota.Reason != "quota" {
+		t.Fatalf("quota reason = %q, want quota", state.Quota.Reason)
 	}
 }
 

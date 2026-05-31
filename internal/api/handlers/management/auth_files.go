@@ -22,17 +22,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/antigravity"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/claude"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/codex"
-	geminiAuth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/gemini"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/kimi"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
-	sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/antigravity"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/claude"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
+	geminiAuth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/gemini"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kimi"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
+	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"golang.org/x/oauth2"
@@ -388,8 +388,20 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 		"source":         "memory",
 		"size":           int64(0),
 	}
+	entry["success"] = auth.Success
+	entry["failed"] = auth.Failed
+	entry["recent_requests"] = auth.RecentRequestsSnapshot(time.Now())
 	if email := authEmail(auth); email != "" {
 		entry["email"] = email
+	}
+	codexProvider := strings.EqualFold(strings.TrimSpace(auth.Provider), "codex")
+	codexChatGPTAccountID := ""
+	if codexProvider {
+		if accountID := codexAccountID(auth); accountID != "" {
+			codexChatGPTAccountID = accountID
+			entry["account_id"] = accountID
+			entry["chatgpt_account_id"] = accountID
+		}
 	}
 	if accountType, account := auth.AccountInfo(); accountType != "" || account != "" {
 		if accountType != "" {
@@ -428,7 +440,16 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 			log.WithError(err).Warnf("failed to stat auth file %s", path)
 		}
 	}
-	if claims := extractCodexIDTokenClaims(auth); claims != nil {
+	claims := extractCodexIDTokenClaims(auth)
+	if codexProvider && codexChatGPTAccountID != "" {
+		if claims == nil {
+			claims = gin.H{}
+		}
+		if _, exists := claims["chatgpt_account_id"]; !exists {
+			claims["chatgpt_account_id"] = codexChatGPTAccountID
+		}
+	}
+	if claims != nil {
 		entry["id_token"] = claims
 	}
 	// Expose priority from Attributes (set by synthesizer from JSON "priority" field).
@@ -520,6 +541,29 @@ func authEmail(auth *coreauth.Auth) string {
 		}
 		if v := strings.TrimSpace(auth.Attributes["account_email"]); v != "" {
 			return v
+		}
+	}
+	return ""
+}
+
+func codexAccountID(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if auth.Metadata != nil {
+		for _, key := range []string{"chatgpt_account_id", "chatgptAccountId", "account_id", "accountId"} {
+			if v, ok := auth.Metadata[key].(string); ok {
+				if trimmed := strings.TrimSpace(v); trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+	}
+	if auth.Attributes != nil {
+		for _, key := range []string{"chatgpt_account_id", "chatgptAccountId", "account_id", "accountId"} {
+			if trimmed := strings.TrimSpace(auth.Attributes[key]); trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	return ""
@@ -2395,23 +2439,10 @@ func performGeminiCLISetup(ctx context.Context, httpClient *http.Client, storage
 			finalProjectID := projectID
 			if responseProjectID != "" {
 				if explicitProject && !strings.EqualFold(responseProjectID, projectID) {
-					// Check if this is a free user (gen-lang-client projects or free/legacy tier)
-					isFreeUser := strings.HasPrefix(projectID, "gen-lang-client-") ||
-						strings.EqualFold(tierID, "FREE") ||
-						strings.EqualFold(tierID, "LEGACY")
-
-					if isFreeUser {
-						// For free users, use backend project ID for preview model access
-						log.Infof("Gemini onboarding: frontend project %s maps to backend project %s", projectID, responseProjectID)
-						log.Infof("Using backend project ID: %s (recommended for preview model access)", responseProjectID)
-						finalProjectID = responseProjectID
-					} else {
-						// Pro users: keep requested project ID (original behavior)
-						log.Warnf("Gemini onboarding returned project %s instead of requested %s; keeping requested project ID.", responseProjectID, projectID)
-					}
-				} else {
-					finalProjectID = responseProjectID
+					log.Infof("Gemini onboarding: requested project %s maps to backend project %s", projectID, responseProjectID)
+					log.Infof("Using backend project ID: %s", responseProjectID)
 				}
+				finalProjectID = responseProjectID
 			}
 
 			storage.ProjectID = strings.TrimSpace(finalProjectID)

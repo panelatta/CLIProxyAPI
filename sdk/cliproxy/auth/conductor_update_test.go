@@ -2,7 +2,11 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"testing"
+	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
 func TestManager_Update_PreservesModelStates(t *testing.T) {
@@ -200,5 +204,63 @@ func TestManager_Update_ActiveInheritsModelStates(t *testing.T) {
 	}
 	if state.Quota.BackoffLevel != backoffLevel {
 		t.Fatalf("expected BackoffLevel to be %d, got %d", backoffLevel, state.Quota.BackoffLevel)
+	}
+}
+
+func TestManager_ReconcileRegistryModelStates_PreservesActiveCooldown(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	authID := "auth-reconcile-cooldown"
+	model := "gpt-5.5"
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(authID, "codex", []*registry.ModelInfo{{ID: model}})
+	t.Cleanup(func() {
+		reg.UnregisterClient(authID)
+	})
+
+	if _, errRegister := m.Register(context.Background(), &Auth{
+		ID:       authID,
+		Provider: "codex",
+		Status:   StatusActive,
+	}); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	retryAfter := 30 * time.Minute
+	m.MarkResult(context.Background(), Result{
+		AuthID:     authID,
+		Provider:   "codex",
+		Model:      model,
+		Success:    false,
+		RetryAfter: &retryAfter,
+		Error:      &Error{HTTPStatus: http.StatusTooManyRequests, Message: "quota"},
+	})
+
+	if count := reg.GetModelCount(model); count != 0 {
+		t.Fatalf("model count after quota = %d, want 0", count)
+	}
+
+	reg.RegisterClient(authID, "codex", []*registry.ModelInfo{{ID: model}})
+	if count := reg.GetModelCount(model); count != 1 {
+		t.Fatalf("model count after registry re-register = %d, want 1 before reconcile", count)
+	}
+
+	m.ReconcileRegistryModelStates(context.Background(), authID)
+
+	updated, ok := m.GetByID(authID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth to be present")
+	}
+	state := updated.ModelStates[model]
+	if state == nil {
+		t.Fatalf("expected model state for %q", model)
+	}
+	if !state.Unavailable || !state.Quota.Exceeded {
+		t.Fatalf("expected cooldown state to be preserved, got unavailable=%v quota=%v", state.Unavailable, state.Quota.Exceeded)
+	}
+	if state.NextRetryAfter.IsZero() || !state.NextRetryAfter.After(time.Now()) {
+		t.Fatalf("expected future NextRetryAfter, got %v", state.NextRetryAfter)
+	}
+	if count := reg.GetModelCount(model); count != 0 {
+		t.Fatalf("model count after reconcile = %d, want 0", count)
 	}
 }
