@@ -271,6 +271,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	body, _ = sjson.DeleteBytes(body, "safety_identifier")
 	body, _ = sjson.DeleteBytes(body, "stream_options")
 	body = normalizeCodexInstructions(body)
+	body = normalizeCodexResponsesCompatibility(body)
 	if e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff {
 		body = ensureImageGenerationTool(body, baseModel, auth)
 	}
@@ -594,6 +595,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	body, _ = sjson.DeleteBytes(body, "stream_options")
 	body, _ = sjson.SetBytes(body, "model", baseModel)
 	body = normalizeCodexInstructions(body)
+	body = normalizeCodexResponsesCompatibility(body)
 	if e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff {
 		body = ensureImageGenerationTool(body, baseModel, auth)
 	}
@@ -1108,6 +1110,11 @@ func normalizeCodexInstructions(body []byte) []byte {
 	if !instructions.Exists() || instructions.Type == gjson.Null {
 		body, _ = sjson.SetBytes(body, "instructions", "")
 	}
+	return body
+}
+
+func normalizeCodexResponsesCompatibility(body []byte) []byte {
+	body, _ = sjson.DeleteBytes(body, "background")
 	return body
 }
 
