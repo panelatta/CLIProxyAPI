@@ -1115,6 +1115,7 @@ func normalizeCodexInstructions(body []byte) []byte {
 
 func normalizeCodexResponsesCompatibility(body []byte) []byte {
 	body, _ = sjson.DeleteBytes(body, "background")
+	body, _ = sjson.SetBytes(body, "store", false)
 	return body
 }
 

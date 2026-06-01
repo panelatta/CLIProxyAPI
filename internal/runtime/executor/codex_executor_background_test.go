@@ -83,7 +83,7 @@ func assertCodexBackgroundCompatibilityBody(t *testing.T, body []byte) {
 	if gjson.GetBytes(body, "background").Exists() {
 		t.Fatalf("background should not be forwarded to Codex upstream: %s", string(body))
 	}
-	if !gjson.GetBytes(body, "store").Bool() {
-		t.Fatalf("store=true should be preserved: %s", string(body))
+	if gjson.GetBytes(body, "store").Bool() {
+		t.Fatalf("store=true should not be forwarded to Codex upstream: %s", string(body))
 	}
 }
