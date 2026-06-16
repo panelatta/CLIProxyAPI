@@ -32,7 +32,15 @@ type SDKConfig struct {
 	RequestLog bool `yaml:"request-log" json:"request-log"`
 
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
+	// It is intentionally kept as []string because request authentication, SDK
+	// access providers, TUI clients, and older management clients depend on this
+	// runtime shape.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
+
+	// APIKeyEntries stores optional display metadata for APIKeys. It is populated
+	// from YAML object entries and management APIs, but it is not used for request
+	// authentication.
+	APIKeyEntries []AccessAPIKeyEntry `yaml:"-" json:"api-key-entries,omitempty"`
 
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
 	// Default is false (disabled).

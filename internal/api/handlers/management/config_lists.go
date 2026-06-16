@@ -105,17 +105,117 @@ func (h *Handler) deleteFromStringList(c *gin.Context, target *[]string, after f
 }
 
 // api-keys
-func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
+func (h *Handler) GetAPIKeys(c *gin.Context) {
+	entries := config.AccessAPIKeyEntriesForKeys(h.cfg.APIKeys, h.cfg.APIKeyEntries)
+	c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys, "api-key-entries": entries})
+}
 func (h *Handler) PutAPIKeys(c *gin.Context) {
 	h.putStringList(c, func(v []string) {
 		h.cfg.APIKeys = append([]string(nil), v...)
-	}, nil)
+	}, h.cfg.NormalizeAccessAPIKeyEntries)
 }
 func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	h.patchStringList(c, &h.cfg.APIKeys, func() {})
+	h.patchStringList(c, &h.cfg.APIKeys, h.cfg.NormalizeAccessAPIKeyEntries)
 }
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	h.deleteFromStringList(c, &h.cfg.APIKeys, func() {})
+	h.deleteFromStringList(c, &h.cfg.APIKeys, h.cfg.NormalizeAccessAPIKeyEntries)
+}
+
+func (h *Handler) GetAPIKeyEntries(c *gin.Context) {
+	h.cfg.NormalizeAccessAPIKeyEntries()
+	c.JSON(200, gin.H{"api-key-entries": h.cfg.APIKeyEntries})
+}
+
+func (h *Handler) PutAPIKeyEntries(c *gin.Context) {
+	data, err := c.GetRawData()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "failed to read body"})
+		return
+	}
+	entries, ok := decodeAPIKeyEntriesBody(c, data)
+	if !ok {
+		return
+	}
+	normalized, keys := config.NormalizeAccessAPIKeyEntriesForManagement(entries)
+	h.cfg.APIKeys = keys
+	h.cfg.APIKeyEntries = normalized
+	h.persist(c)
+}
+
+func (h *Handler) PatchAPIKeyEntries(c *gin.Context) {
+	var body struct {
+		Index *int                      `json:"index"`
+		Value *config.AccessAPIKeyEntry `json:"value"`
+		New   *config.AccessAPIKeyEntry `json:"new"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+
+	h.cfg.NormalizeAccessAPIKeyEntries()
+	if body.Index != nil && body.Value != nil && *body.Index >= 0 && *body.Index < len(h.cfg.APIKeyEntries) {
+		h.cfg.APIKeyEntries[*body.Index] = *body.Value
+		h.cfg.APIKeyEntries, h.cfg.APIKeys = config.NormalizeAccessAPIKeyEntriesForManagement(h.cfg.APIKeyEntries)
+		h.persist(c)
+		return
+	}
+	if body.New != nil {
+		h.cfg.APIKeyEntries = append(h.cfg.APIKeyEntries, *body.New)
+		h.cfg.APIKeyEntries, h.cfg.APIKeys = config.NormalizeAccessAPIKeyEntriesForManagement(h.cfg.APIKeyEntries)
+		h.persist(c)
+		return
+	}
+	c.JSON(400, gin.H{"error": "missing fields"})
+}
+
+func (h *Handler) DeleteAPIKeyEntries(c *gin.Context) {
+	h.cfg.NormalizeAccessAPIKeyEntries()
+	if idxStr := c.Query("index"); idxStr != "" {
+		var idx int
+		_, err := fmt.Sscanf(idxStr, "%d", &idx)
+		if err == nil && idx >= 0 && idx < len(h.cfg.APIKeyEntries) {
+			h.cfg.APIKeyEntries = append(h.cfg.APIKeyEntries[:idx], h.cfg.APIKeyEntries[idx+1:]...)
+			h.cfg.APIKeyEntries, h.cfg.APIKeys = config.NormalizeAccessAPIKeyEntriesForManagement(h.cfg.APIKeyEntries)
+			h.persist(c)
+			return
+		}
+	}
+	if key := strings.TrimSpace(c.Query("api-key")); key != "" {
+		out := make([]config.AccessAPIKeyEntry, 0, len(h.cfg.APIKeyEntries))
+		for _, entry := range h.cfg.APIKeyEntries {
+			if strings.TrimSpace(entry.APIKey) != key {
+				out = append(out, entry)
+			}
+		}
+		h.cfg.APIKeyEntries, h.cfg.APIKeys = config.NormalizeAccessAPIKeyEntriesForManagement(out)
+		h.persist(c)
+		return
+	}
+	c.JSON(400, gin.H{"error": "missing index or api-key"})
+}
+
+func decodeAPIKeyEntriesBody(c *gin.Context, data []byte) ([]config.AccessAPIKeyEntry, bool) {
+	var arr []config.AccessAPIKeyEntry
+	if err := json.Unmarshal(data, &arr); err == nil {
+		return arr, true
+	}
+	var obj struct {
+		Items []config.AccessAPIKeyEntry `json:"items"`
+		Value []config.AccessAPIKeyEntry `json:"value"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return nil, false
+	}
+	if obj.Items != nil {
+		return obj.Items, true
+	}
+	if obj.Value != nil {
+		return obj.Value, true
+	}
+	c.JSON(400, gin.H{"error": "invalid body"})
+	return nil, false
 }
 
 // gemini-api-key: []GeminiKey

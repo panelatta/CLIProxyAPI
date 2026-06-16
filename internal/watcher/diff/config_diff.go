@@ -100,6 +100,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	} else if !reflect.DeepEqual(trimStrings(oldCfg.APIKeys), trimStrings(newCfg.APIKeys)) {
 		changes = append(changes, "api-keys: values updated (count unchanged, redacted)")
 	}
+	if !equalAccessAPIKeyEntryNames(oldCfg.APIKeyEntries, newCfg.APIKeyEntries) {
+		changes = append(changes, "api-keys: display names updated")
+	}
 	if len(oldCfg.GeminiKey) != len(newCfg.GeminiKey) {
 		changes = append(changes, fmt.Sprintf("gemini-api-key count: %d -> %d", len(oldCfg.GeminiKey), len(newCfg.GeminiKey)))
 	} else {
@@ -336,6 +339,21 @@ func trimStrings(in []string) []string {
 		out[i] = strings.TrimSpace(in[i])
 	}
 	return out
+}
+
+func equalAccessAPIKeyEntryNames(a, b []config.AccessAPIKeyEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i].APIKey) != strings.TrimSpace(b[i].APIKey) {
+			return false
+		}
+		if strings.TrimSpace(a[i].Name) != strings.TrimSpace(b[i].Name) {
+			return false
+		}
+	}
+	return true
 }
 
 func equalStringMap(a, b map[string]string) bool {

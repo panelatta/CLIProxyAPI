@@ -108,6 +108,20 @@ func TestBuildConfigChangeDetails_NoChanges(t *testing.T) {
 	}
 }
 
+func TestBuildConfigChangeDetailsAPIKeyDisplayNameOnly(t *testing.T) {
+	oldCfg := &config.Config{SDKConfig: sdkconfig.SDKConfig{
+		APIKeys:       []string{"sk-a"},
+		APIKeyEntries: []config.AccessAPIKeyEntry{{APIKey: "sk-a", Name: "Old name"}},
+	}}
+	newCfg := &config.Config{SDKConfig: sdkconfig.SDKConfig{
+		APIKeys:       []string{"sk-a"},
+		APIKeyEntries: []config.AccessAPIKeyEntry{{APIKey: "sk-a", Name: "New name"}},
+	}}
+
+	details := BuildConfigChangeDetails(oldCfg, newCfg)
+	expectContains(t, details, "api-keys: display names updated")
+}
+
 func TestBuildConfigChangeDetails_GeminiVertexHeadersAndForceMappings(t *testing.T) {
 	oldCfg := &config.Config{
 		GeminiKey: []config.GeminiKey{

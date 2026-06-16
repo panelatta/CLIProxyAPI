@@ -149,6 +149,36 @@ type Config struct {
 	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
+func (cfg *Config) UnmarshalYAML(value *yaml.Node) error {
+	if cfg == nil {
+		return nil
+	}
+
+	type plainConfig Config
+	decoded := plainConfig(*cfg)
+	decodeNode := value
+
+	if value != nil && value.Kind == yaml.MappingNode {
+		cloned := cloneYAMLNode(value)
+		if node := apiKeysNode(cloned); node != nil {
+			entries, keys, err := parseAccessAPIKeyEntriesNode(node)
+			if err != nil {
+				return err
+			}
+			replaceAPIKeysNode(cloned, keys, nil)
+			decoded.SDKConfig.APIKeyEntries = entries
+			decodeNode = cloned
+		}
+	}
+
+	if err := decodeNode.Decode(&decoded); err != nil {
+		return err
+	}
+	*cfg = Config(decoded)
+	cfg.NormalizeAccessAPIKeyEntries()
+	return nil
+}
+
 // ClaudeHeaderDefaults configures default header values injected into Claude API requests.
 // In legacy mode, UserAgent/PackageVersion/RuntimeVersion/Timeout act as fallbacks when
 // the client omits them, while OS/Arch remain runtime-derived. When stabilized device
@@ -644,6 +674,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		}
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	cfg.NormalizeAccessAPIKeyEntries()
 
 	// NOTE: Startup legacy key migration is intentionally disabled.
 	// Reason: avoid mutating config.yaml during server startup.
@@ -1101,6 +1132,7 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 
 	// Merge generated into original in-place, preserving comments/order of existing nodes.
 	mergeMappingPreserve(original.Content[0], generated.Content[0])
+	replaceAPIKeysNode(original.Content[0], cfg.APIKeys, cfg.APIKeyEntries)
 	normalizeCollectionNodeStyles(original.Content[0])
 
 	// Write back.
