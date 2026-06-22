@@ -998,21 +998,17 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 			return resp, err
 		}
 
-		if eventType == "response.output_item.done" {
-			itemResult := gjson.GetBytes(eventData, "item")
-			if !itemResult.Exists() || itemResult.Type != gjson.JSON {
-				continue
-			}
-			outputIndexResult := gjson.GetBytes(eventData, "output_index")
-			if outputIndexResult.Exists() {
-				outputItemsByIndex[outputIndexResult.Int()] = []byte(itemResult.Raw)
-			} else {
-				outputItemsFallback = append(outputItemsFallback, []byte(itemResult.Raw))
-			}
+		if strings.TrimSpace(eventType) == "response.done" {
+			eventData = normalizeCodexCompletionPayload(eventData)
+			eventType = gjson.GetBytes(eventData, "type").String()
+		}
+
+		if strings.TrimSpace(eventType) == "response.output_item.done" {
+			collectCodexOutputItemDone(eventData, outputItemsByIndex, &outputItemsFallback)
 			continue
 		}
 
-		if eventType != "response.completed" {
+		if strings.TrimSpace(eventType) != "response.completed" {
 			continue
 		}
 
@@ -1021,28 +1017,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		}
 		publishCodexImageToolUsage(ctx, reporter, body, eventData)
 
-		completedData := eventData
-		outputResult := gjson.GetBytes(completedData, "response.output")
-		shouldPatchOutput := (!outputResult.Exists() || !outputResult.IsArray() || len(outputResult.Array()) == 0) && (len(outputItemsByIndex) > 0 || len(outputItemsFallback) > 0)
-		if shouldPatchOutput {
-			completedDataPatched := completedData
-			completedDataPatched, _ = sjson.SetRawBytes(completedDataPatched, "response.output", []byte(`[]`))
-
-			indexes := make([]int64, 0, len(outputItemsByIndex))
-			for idx := range outputItemsByIndex {
-				indexes = append(indexes, idx)
-			}
-			sort.Slice(indexes, func(i, j int) bool {
-				return indexes[i] < indexes[j]
-			})
-			for _, idx := range indexes {
-				completedDataPatched, _ = sjson.SetRawBytes(completedDataPatched, "response.output.-1", outputItemsByIndex[idx])
-			}
-			for _, item := range outputItemsFallback {
-				completedDataPatched, _ = sjson.SetRawBytes(completedDataPatched, "response.output.-1", item)
-			}
-			completedData = completedDataPatched
-		}
+		completedData := patchCodexCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
 		cacheCodexReasoningReplayFromCompleted(replayScope, completedData)
 
 		var param any
@@ -1409,7 +1384,13 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 					}
 					return
 				}
-				switch gjson.GetBytes(data, "type").String() {
+				eventType := strings.TrimSpace(gjson.GetBytes(data, "type").String())
+				if eventType == "response.done" {
+					data = normalizeCodexCompletionPayload(data)
+					translatedLine = append([]byte("data: "), data...)
+					eventType = strings.TrimSpace(gjson.GetBytes(data, "type").String())
+				}
+				switch eventType {
 				case "response.output_item.done":
 					collectCodexOutputItemDone(data, outputItemsByIndex, &outputItemsFallback)
 				case "response.completed":

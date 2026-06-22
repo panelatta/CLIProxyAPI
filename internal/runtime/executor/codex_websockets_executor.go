@@ -378,7 +378,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 			return resp, wsErr
 		}
 
-		payload = normalizeCodexWebsocketCompletion(payload)
+		payload = normalizeCodexCompletionPayload(payload)
 		eventType := gjson.GetBytes(payload, "type").String()
 		if eventType == "response.completed" {
 			if detail, ok := helps.ParseCodexUsage(payload); ok {
@@ -670,7 +670,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 				continue
 			}
 
-			payload = normalizeCodexWebsocketCompletion(payload)
+			payload = normalizeCodexCompletionPayload(payload)
 			eventType = gjson.GetBytes(payload, "type").String()
 			if eventType == "response.completed" || eventType == "response.done" {
 				if detail, ok := helps.ParseCodexUsage(payload); ok {
@@ -1263,7 +1263,7 @@ func parseCodexWebsocketErrorHeaders(payload []byte) http.Header {
 	return mapped
 }
 
-func normalizeCodexWebsocketCompletion(payload []byte) []byte {
+func normalizeCodexCompletionPayload(payload []byte) []byte {
 	if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.done" {
 		updated, err := sjson.SetBytes(payload, "type", "response.completed")
 		if err == nil && len(updated) > 0 {
