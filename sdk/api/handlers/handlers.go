@@ -55,7 +55,7 @@ const idempotencyKeyMetadataKey = "idempotency_key"
 
 const (
 	defaultStreamingKeepAliveSeconds = 0
-	defaultStreamingBootstrapRetries = 0
+	defaultStreamingBootstrapRetries = 1
 	// Stream interceptor history is intentionally bounded and not configurable in the first SDK surface.
 	maxStreamInterceptorHistoryChunks = 64
 	maxStreamInterceptorHistoryBytes  = 1 << 20
@@ -240,7 +240,7 @@ func NonStreamingKeepAliveInterval(cfg *config.SDKConfig) time.Duration {
 // StreamingBootstrapRetries returns how many times a streaming request may be retried before any bytes are sent.
 func StreamingBootstrapRetries(cfg *config.SDKConfig) int {
 	retries := defaultStreamingBootstrapRetries
-	if cfg != nil {
+	if cfg != nil && cfg.Streaming.BootstrapRetries != 0 {
 		retries = cfg.Streaming.BootstrapRetries
 	}
 	if retries < 0 {

@@ -76,6 +76,6 @@ type StreamingConfig struct {
 
 	// BootstrapRetries controls how many times the server may retry a streaming request before any bytes are sent,
 	// to allow auth rotation / transient recovery.
-	// <= 0 disables bootstrap retries. Default is 0.
+	// 0 uses the default. Negative values disable bootstrap retries. Default is 1.
 	BootstrapRetries int `yaml:"bootstrap-retries,omitempty" json:"bootstrap-retries,omitempty"`
 }

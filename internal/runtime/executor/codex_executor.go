@@ -129,6 +129,15 @@ func patchCodexCompletedOutput(eventData []byte, outputItemsByIndex map[int64][]
 	return completedDataPatched
 }
 
+func codexStreamBootstrapEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "response.created", "response.in_progress", "response.queued":
+		return true
+	default:
+		return false
+	}
+}
+
 func codexTerminalStreamContextLengthErr(eventData []byte) (statusErr, bool) {
 	streamErr, body, ok := codexTerminalStreamErr(eventData)
 	if !ok || !codexTerminalErrorIsContextLength(body) {
@@ -1359,12 +1368,51 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		var param any
 		outputItemsByIndex := make(map[int64][]byte)
 		var outputItemsFallback [][]byte
+		var pendingBootstrapChunks [][]byte
+		streamReleased := false
+		sendTranslatedChunk := func(chunk []byte) bool {
+			select {
+			case out <- cliproxyexecutor.StreamChunk{Payload: chunk}:
+				return true
+			case <-ctx.Done():
+				streamErr = ctx.Err()
+				return false
+			}
+		}
+		flushPendingBootstrapChunks := func() bool {
+			for _, chunk := range pendingBootstrapChunks {
+				if !sendTranslatedChunk(chunk) {
+					return false
+				}
+			}
+			pendingBootstrapChunks = nil
+			streamReleased = true
+			return true
+		}
+		writeTranslatedChunks := func(chunks [][]byte, release bool) bool {
+			if streamReleased {
+				for i := range chunks {
+					if !sendTranslatedChunk(chunks[i]) {
+						return false
+					}
+				}
+				return true
+			}
+			for i := range chunks {
+				pendingBootstrapChunks = append(pendingBootstrapChunks, bytes.Clone(chunks[i]))
+			}
+			if !release {
+				return true
+			}
+			return flushPendingBootstrapChunks()
+		}
 		for scanner.Scan() {
 			line := applyCodexIdentityConfuseResponsePayload(scanner.Bytes(), identityState)
 			lastUpstreamChunkAt = time.Now()
 			upstreamChunkCount++
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
 			translatedLine := bytes.Clone(line)
+			releaseStream := false
 
 			if bytes.HasPrefix(line, dataTag) {
 				data := bytes.TrimSpace(line[5:])
@@ -1392,6 +1440,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 					translatedLine = append([]byte("data: "), data...)
 					eventType = strings.TrimSpace(gjson.GetBytes(data, "type").String())
 				}
+				releaseStream = !codexStreamBootstrapEvent(eventType)
 				if eventType == "error" || eventType == "response.failed" {
 					seenTerminal = true
 				}
@@ -1412,13 +1461,8 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 
 			translatedLine = applyCodexIdentityExposeResponsePayload(translatedLine, identityState)
 			chunks := sdktranslator.TranslateStream(ctx, to, responseFormat, req.Model, originalPayload, body, translatedLine, &param)
-			for i := range chunks {
-				select {
-				case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
-				case <-ctx.Done():
-					streamErr = ctx.Err()
-					return
-				}
+			if !writeTranslatedChunks(chunks, releaseStream) {
+				return
 			}
 		}
 		if errScan := scanner.Err(); errScan != nil {
@@ -1435,6 +1479,9 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 			streamErr = statusErr{code: http.StatusRequestTimeout, msg: "codex stream closed before response.completed"}
 			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 			reporter.PublishFailure(ctx, streamErr)
+			if !streamReleased {
+				pendingBootstrapChunks = nil
+			}
 			select {
 			case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
 			case <-ctx.Done():

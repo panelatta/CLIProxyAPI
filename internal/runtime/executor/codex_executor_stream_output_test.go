@@ -376,14 +376,19 @@ func TestCodexExecutorExecuteStream_ClosedBeforeCompletedReturnsError(t *testing
 	}
 
 	var streamErr error
+	var payload bytes.Buffer
 	for chunk := range result.Chunks {
 		if chunk.Err != nil {
 			streamErr = chunk.Err
 			break
 		}
+		payload.Write(chunk.Payload)
 	}
 	if streamErr == nil {
 		t.Fatal("expected stream error when upstream closes before response.completed")
+	}
+	if payload.Len() != 0 {
+		t.Fatalf("expected bootstrap frames to be held before terminal error, got payload %q", payload.String())
 	}
 	if got := streamErr.Error(); got != "codex stream closed before response.completed" {
 		t.Fatalf("stream error = %q", got)
