@@ -2,6 +2,7 @@ package responses
 
 import (
 	"fmt"
+	"strings"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -43,10 +44,75 @@ func ConvertOpenAIResponsesRequestToCodex(modelName string, inputRawJSON []byte,
 	rawJSON, _ = sjson.DeleteBytes(rawJSON, "user")
 
 	// Convert role "system" to "developer" in input array to comply with Codex API requirements.
+	rawJSON = liftCodexInstructionMessages(rawJSON)
 	rawJSON = convertSystemRoleToDeveloper(rawJSON)
 	rawJSON = normalizeCodexBuiltinTools(rawJSON)
 
 	return rawJSON
+}
+
+func liftCodexInstructionMessages(rawJSON []byte) []byte {
+	inputResult := gjson.GetBytes(rawJSON, "input")
+	if !inputResult.IsArray() {
+		return rawJSON
+	}
+
+	instructions := make([]string, 0, 2)
+	if existing := strings.TrimSpace(gjson.GetBytes(rawJSON, "instructions").String()); existing != "" {
+		instructions = append(instructions, existing)
+	}
+
+	keptInput := []byte(`[]`)
+	changed := false
+	for _, item := range inputResult.Array() {
+		role := item.Get("role").String()
+		itemType := item.Get("type").String()
+		if (itemType == "" || itemType == "message") && (role == "system" || role == "developer") {
+			if text := codexInstructionTextFromMessage(item); text != "" {
+				instructions = append(instructions, text)
+				changed = true
+				continue
+			}
+		}
+		keptInput, _ = sjson.SetRawBytes(keptInput, "-1", []byte(item.Raw))
+	}
+	if !changed {
+		return rawJSON
+	}
+
+	rawJSON, _ = sjson.SetRawBytes(rawJSON, "input", keptInput)
+	if len(instructions) > 0 {
+		rawJSON, _ = sjson.SetBytes(rawJSON, "instructions", strings.Join(instructions, "\n\n"))
+	}
+	return rawJSON
+}
+
+func codexInstructionTextFromMessage(item gjson.Result) string {
+	content := item.Get("content")
+	switch {
+	case content.Type == gjson.String:
+		return strings.TrimSpace(content.String())
+	case content.IsObject():
+		return strings.TrimSpace(content.Get("text").String())
+	case content.IsArray():
+		parts := make([]string, 0)
+		for _, part := range content.Array() {
+			if !part.IsObject() {
+				continue
+			}
+			partType := part.Get("type").String()
+			if partType != "" && partType != "text" && partType != "input_text" {
+				continue
+			}
+			text := strings.TrimSpace(part.Get("text").String())
+			if text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
 }
 
 // applyResponsesCompactionCompatibility handles OpenAI Responses context_management.compaction

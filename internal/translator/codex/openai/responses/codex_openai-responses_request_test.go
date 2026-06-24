@@ -6,7 +6,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestConvertSystemRoleToDeveloper_BasicConversion tests the basic system -> developer role conversion
+// TestConvertSystemRoleToDeveloper_BasicConversion tests system instructions are lifted out of input.
 func TestConvertSystemRoleToDeveloper_BasicConversion(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -27,26 +27,61 @@ func TestConvertSystemRoleToDeveloper_BasicConversion(t *testing.T) {
 	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
 	outputStr := string(output)
 
-	// Check that system role was converted to developer
-	firstItemRole := gjson.Get(outputStr, "input.0.role")
-	if firstItemRole.String() != "developer" {
-		t.Errorf("Expected role 'developer', got '%s'", firstItemRole.String())
+	if instructions := gjson.Get(outputStr, "instructions").String(); instructions != "You are a pirate." {
+		t.Errorf("Expected instructions %q, got %q", "You are a pirate.", instructions)
+	}
+
+	input := gjson.Get(outputStr, "input").Array()
+	if len(input) != 1 {
+		t.Fatalf("Expected one input message after lifting instructions, got %d: %s", len(input), gjson.Get(outputStr, "input").Raw)
 	}
 
 	// Check that user role remains unchanged
-	secondItemRole := gjson.Get(outputStr, "input.1.role")
-	if secondItemRole.String() != "user" {
-		t.Errorf("Expected role 'user', got '%s'", secondItemRole.String())
+	firstItemRole := gjson.Get(outputStr, "input.0.role")
+	if firstItemRole.String() != "user" {
+		t.Errorf("Expected role 'user', got '%s'", firstItemRole.String())
 	}
 
 	// Check content is preserved
 	firstItemContent := gjson.Get(outputStr, "input.0.content.0.text")
-	if firstItemContent.String() != "You are a pirate." {
-		t.Errorf("Expected content 'You are a pirate.', got '%s'", firstItemContent.String())
+	if firstItemContent.String() != "Say hello." {
+		t.Errorf("Expected content 'Say hello.', got '%s'", firstItemContent.String())
 	}
 }
 
-// TestConvertSystemRoleToDeveloper_MultipleSystemMessages tests conversion with multiple system messages
+func TestConvertOpenAIResponsesRequestToCodex_LiftsDeveloperMessageToInstructions(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.5",
+		"input": [
+			{
+				"type": "message",
+				"role": "developer",
+				"content": [{"type": "input_text", "text": "Use web search when useful."}]
+			},
+			{
+				"type": "message",
+				"role": "user",
+				"content": [{"type": "input_text", "text": "Search for Codex docs."}]
+			}
+		],
+		"tools": [{"type": "web_search"}]
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.5", inputJSON, false)
+	outputStr := string(output)
+
+	if instructions := gjson.Get(outputStr, "instructions").String(); instructions != "Use web search when useful." {
+		t.Fatalf("Expected developer instructions to be lifted, got %q: %s", instructions, outputStr)
+	}
+	if role := gjson.Get(outputStr, "input.0.role").String(); role != "user" {
+		t.Fatalf("Expected only user input to remain, got role %q: %s", role, outputStr)
+	}
+	if got := gjson.Get(outputStr, "tools.0.type").String(); got != "web_search" {
+		t.Fatalf("Expected hosted web_search tool to be preserved, got %q: %s", got, outputStr)
+	}
+}
+
+// TestConvertSystemRoleToDeveloper_MultipleSystemMessages tests lifting multiple system messages.
 func TestConvertSystemRoleToDeveloper_MultipleSystemMessages(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",
@@ -72,21 +107,17 @@ func TestConvertSystemRoleToDeveloper_MultipleSystemMessages(t *testing.T) {
 	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
 	outputStr := string(output)
 
-	// Check that both system roles were converted
-	firstRole := gjson.Get(outputStr, "input.0.role")
-	if firstRole.String() != "developer" {
-		t.Errorf("Expected first role 'developer', got '%s'", firstRole.String())
+	if instructions := gjson.Get(outputStr, "instructions").String(); instructions != "You are helpful.\n\nBe concise." {
+		t.Errorf("Expected combined instructions, got %q", instructions)
 	}
-
-	secondRole := gjson.Get(outputStr, "input.1.role")
-	if secondRole.String() != "developer" {
-		t.Errorf("Expected second role 'developer', got '%s'", secondRole.String())
+	input := gjson.Get(outputStr, "input").Array()
+	if len(input) != 1 {
+		t.Fatalf("Expected one input message after lifting instructions, got %d: %s", len(input), gjson.Get(outputStr, "input").Raw)
 	}
-
 	// Check that user role is unchanged
-	thirdRole := gjson.Get(outputStr, "input.2.role")
-	if thirdRole.String() != "user" {
-		t.Errorf("Expected third role 'user', got '%s'", thirdRole.String())
+	firstRole := gjson.Get(outputStr, "input.0.role")
+	if firstRole.String() != "user" {
+		t.Errorf("Expected first role 'user', got '%s'", firstRole.String())
 	}
 }
 
@@ -188,10 +219,16 @@ func TestConvertOpenAIResponsesRequestToCodex_OriginalIssue(t *testing.T) {
 	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
 	outputStr := string(output)
 
-	// Verify system role was converted to developer
-	firstRole := gjson.Get(outputStr, "input.0.role")
-	if firstRole.String() != "developer" {
-		t.Errorf("Expected role 'developer', got '%s'", firstRole.String())
+	if instructions := gjson.Get(outputStr, "instructions").String(); instructions != "You are a pirate. Always respond in pirate speak." {
+		t.Errorf("Expected instructions to contain system prompt, got %q", instructions)
+	}
+
+	input := gjson.Get(outputStr, "input").Array()
+	if len(input) != 1 {
+		t.Fatalf("Expected one input message after lifting instructions, got %d: %s", len(input), gjson.Get(outputStr, "input").Raw)
+	}
+	if role := gjson.Get(outputStr, "input.0.role").String(); role != "user" {
+		t.Errorf("Expected role 'user', got '%s'", role)
 	}
 
 	// Verify stream was set to true (as required by Codex)
@@ -245,22 +282,24 @@ func TestConvertSystemRoleToDeveloper_AssistantRole(t *testing.T) {
 	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
 	outputStr := string(output)
 
-	// Check system -> developer
-	firstRole := gjson.Get(outputStr, "input.0.role")
-	if firstRole.String() != "developer" {
-		t.Errorf("Expected first role 'developer', got '%s'", firstRole.String())
+	if instructions := gjson.Get(outputStr, "instructions").String(); instructions != "You are helpful." {
+		t.Errorf("Expected instructions %q, got %q", "You are helpful.", instructions)
+	}
+	input := gjson.Get(outputStr, "input").Array()
+	if len(input) != 2 {
+		t.Fatalf("Expected two input messages after lifting instructions, got %d: %s", len(input), gjson.Get(outputStr, "input").Raw)
 	}
 
 	// Check user unchanged
-	secondRole := gjson.Get(outputStr, "input.1.role")
-	if secondRole.String() != "user" {
-		t.Errorf("Expected second role 'user', got '%s'", secondRole.String())
+	firstRole := gjson.Get(outputStr, "input.0.role")
+	if firstRole.String() != "user" {
+		t.Errorf("Expected first role 'user', got '%s'", firstRole.String())
 	}
 
 	// Check assistant unchanged
-	thirdRole := gjson.Get(outputStr, "input.2.role")
-	if thirdRole.String() != "assistant" {
-		t.Errorf("Expected third role 'assistant', got '%s'", thirdRole.String())
+	secondRole := gjson.Get(outputStr, "input.1.role")
+	if secondRole.String() != "assistant" {
+		t.Errorf("Expected second role 'assistant', got '%s'", secondRole.String())
 	}
 }
 

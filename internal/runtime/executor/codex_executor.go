@@ -1320,13 +1320,14 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		lastUpstreamChunkAt := time.Time{}
 		upstreamChunkCount := 0
 		seenCompleted := false
+		seenTerminal := false
 		var streamErr error
 		defer func() {
 			ctxErr := error(nil)
 			if ctx != nil {
 				ctxErr = ctx.Err()
 			}
-			if seenCompleted && streamErr == nil && ctxErr == nil {
+			if (seenCompleted || seenTerminal) && streamErr == nil && ctxErr == nil {
 				return
 			}
 			fields := log.Fields{
@@ -1334,6 +1335,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				"auth_id":                 authID,
 				"upstream_url":            url,
 				"seen_response_completed": seenCompleted,
+				"seen_terminal_error":     seenTerminal,
 				"upstream_chunk_count":    upstreamChunkCount,
 				"duration_ms":             time.Since(startedAt).Milliseconds(),
 			}
@@ -1390,6 +1392,9 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 					translatedLine = append([]byte("data: "), data...)
 					eventType = strings.TrimSpace(gjson.GetBytes(data, "type").String())
 				}
+				if eventType == "error" || eventType == "response.failed" {
+					seenTerminal = true
+				}
 				switch eventType {
 				case "response.output_item.done":
 					collectCodexOutputItemDone(data, outputItemsByIndex, &outputItemsFallback)
@@ -1426,7 +1431,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 			}
 			return
 		}
-		if !seenCompleted {
+		if !seenCompleted && !seenTerminal {
 			streamErr = statusErr{code: http.StatusRequestTimeout, msg: "codex stream closed before response.completed"}
 			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 			reporter.PublishFailure(ctx, streamErr)
