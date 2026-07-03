@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -431,7 +430,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				if !ok || selectedAuth == nil {
 					return
 				}
-				if websocketUpstreamSupportsIncrementalInput(selectedAuth.Attributes, selectedAuth.Metadata) {
+				if websocketUpstreamSupportsIncrementalInput(selectedAuth) {
 					pinnedAuthID = authID
 				}
 			})
@@ -889,33 +888,8 @@ func dedupeInputItemsByID(rawArray string) (string, error) {
 	return string(out), nil
 }
 
-func websocketUpstreamSupportsIncrementalInput(attributes map[string]string, metadata map[string]any) bool {
-	if len(attributes) > 0 {
-		if raw := strings.TrimSpace(attributes["websockets"]); raw != "" {
-			parsed, errParse := strconv.ParseBool(raw)
-			if errParse == nil {
-				return parsed
-			}
-		}
-	}
-	if len(metadata) == 0 {
-		return false
-	}
-	raw, ok := metadata["websockets"]
-	if !ok || raw == nil {
-		return false
-	}
-	switch value := raw.(type) {
-	case bool:
-		return value
-	case string:
-		parsed, errParse := strconv.ParseBool(strings.TrimSpace(value))
-		if errParse == nil {
-			return parsed
-		}
-	default:
-	}
-	return false
+func websocketUpstreamSupportsIncrementalInput(auth *coreauth.Auth) bool {
+	return coreauth.WebsocketsEnabled(auth)
 }
 
 func (h *OpenAIResponsesAPIHandler) websocketUpstreamSupportsIncrementalInputForModel(modelName string) bool {
@@ -994,7 +968,7 @@ func (h *OpenAIResponsesAPIHandler) responsesWebsocketUsesUpstreamWebsocketPasst
 		} else if authProvider != provider {
 			return false
 		}
-		if !websocketUpstreamSupportsIncrementalInput(auth.Attributes, auth.Metadata) {
+		if !websocketUpstreamSupportsIncrementalInput(auth) {
 			return false
 		}
 	}
@@ -1002,10 +976,7 @@ func (h *OpenAIResponsesAPIHandler) responsesWebsocketUsesUpstreamWebsocketPasst
 }
 
 func responsesWebsocketAuthSupportsIncrementalInput(auth *coreauth.Auth) bool {
-	if auth == nil {
-		return false
-	}
-	return websocketUpstreamSupportsIncrementalInput(auth.Attributes, auth.Metadata)
+	return websocketUpstreamSupportsIncrementalInput(auth)
 }
 
 func normalizeResponsesWebsocketPassthroughRequest(rawJSON []byte, modelName string) ([]byte, *interfaces.ErrorMessage) {

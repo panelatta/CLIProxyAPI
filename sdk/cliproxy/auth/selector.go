@@ -141,36 +141,64 @@ func canonicalModelKey(model string) string {
 	return modelName
 }
 
-func authWebsocketsEnabled(auth *Auth) bool {
+// WebsocketsEnabled reports whether an auth should use upstream websocket
+// transport. Codex OAuth credentials default to websocket unless explicitly
+// disabled because Codex clients advertise websocket-capable response streams.
+func WebsocketsEnabled(auth *Auth) bool {
 	if auth == nil {
 		return false
+	}
+	if value, ok := explicitWebsocketsValue(auth); ok {
+		return value
+	}
+	return codexOAuthWebsocketsDefault(auth)
+}
+
+func authWebsocketsEnabled(auth *Auth) bool {
+	return WebsocketsEnabled(auth)
+}
+
+func explicitWebsocketsValue(auth *Auth) (bool, bool) {
+	if auth == nil {
+		return false, false
 	}
 	if len(auth.Attributes) > 0 {
 		if raw := strings.TrimSpace(auth.Attributes["websockets"]); raw != "" {
 			parsed, errParse := strconv.ParseBool(raw)
 			if errParse == nil {
-				return parsed
+				return parsed, true
 			}
 		}
 	}
 	if len(auth.Metadata) == 0 {
-		return false
+		return false, false
 	}
 	raw, ok := auth.Metadata["websockets"]
 	if !ok || raw == nil {
-		return false
+		return false, false
 	}
 	switch v := raw.(type) {
 	case bool:
-		return v
+		return v, true
 	case string:
 		parsed, errParse := strconv.ParseBool(strings.TrimSpace(v))
 		if errParse == nil {
-			return parsed
+			return parsed, true
 		}
 	default:
 	}
-	return false
+	return false, false
+}
+
+func codexOAuthWebsocketsDefault(auth *Auth) bool {
+	if auth == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+		return false
+	}
+	kind, _ := auth.AccountInfo()
+	return strings.EqualFold(strings.TrimSpace(kind), "oauth")
 }
 
 func preferCodexWebsocketAuths(ctx context.Context, provider string, available []*Auth) []*Auth {

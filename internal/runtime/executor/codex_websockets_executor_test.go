@@ -35,6 +35,41 @@ func TestShouldFallbackCodexWebsocketStream(t *testing.T) {
 	}
 }
 
+func TestCodexWebsocketsEnabledDefaultsForOAuth(t *testing.T) {
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{"email": "user@example.com"},
+	}
+	if !codexWebsocketsEnabled(auth) {
+		t.Fatal("expected codex OAuth auth to default to websocket enabled")
+	}
+}
+
+func TestCodexWebsocketsEnabledExplicitFalseOverridesDefault(t *testing.T) {
+	auth := &cliproxyauth.Auth{
+		Provider:   "codex",
+		Attributes: map[string]string{"websockets": "false"},
+		Metadata:   map[string]any{"email": "user@example.com"},
+	}
+	if codexWebsocketsEnabled(auth) {
+		t.Fatal("expected explicit websockets=false to disable codex websocket")
+	}
+}
+
+func TestCodexWebsocketsEnabledAPIKeyRequiresExplicitTrue(t *testing.T) {
+	auth := &cliproxyauth.Auth{
+		Provider:   "codex",
+		Attributes: map[string]string{"api_key": "sk-test"},
+	}
+	if codexWebsocketsEnabled(auth) {
+		t.Fatal("expected codex API-key auth to require explicit websocket enablement")
+	}
+	auth.Attributes["websockets"] = "true"
+	if !codexWebsocketsEnabled(auth) {
+		t.Fatal("expected explicit websockets=true to enable codex API-key websocket")
+	}
+}
+
 func TestBuildCodexWebsocketRequestBodyPreservesPreviousResponseID(t *testing.T) {
 	body := []byte(`{"model":"gpt-5-codex","previous_response_id":"resp-1","input":[{"type":"message","id":"msg-1"}]}`)
 

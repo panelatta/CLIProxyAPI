@@ -99,6 +99,59 @@ func registerSchedulerModels(t *testing.T, provider string, model string, authID
 	})
 }
 
+func TestWebsocketsEnabled_CodexOAuthDefaultsToTrue(t *testing.T) {
+	t.Parallel()
+
+	auth := &Auth{
+		Provider: "codex",
+		Metadata: map[string]any{"email": "user@example.com"},
+	}
+	if !WebsocketsEnabled(auth) {
+		t.Fatal("expected codex OAuth auth to default to websocket enabled")
+	}
+}
+
+func TestWebsocketsEnabled_ExplicitFalseOverridesCodexOAuthDefault(t *testing.T) {
+	t.Parallel()
+
+	auth := &Auth{
+		Provider:   "codex",
+		Attributes: map[string]string{"websockets": "false"},
+		Metadata:   map[string]any{"email": "user@example.com"},
+	}
+	if WebsocketsEnabled(auth) {
+		t.Fatal("expected explicit websockets=false to disable codex OAuth websocket")
+	}
+}
+
+func TestWebsocketsEnabled_CodexAPIKeyDoesNotDefaultToTrue(t *testing.T) {
+	t.Parallel()
+
+	auth := &Auth{
+		Provider:   "codex",
+		Attributes: map[string]string{"api_key": "sk-test"},
+	}
+	if WebsocketsEnabled(auth) {
+		t.Fatal("expected codex API-key auth to require explicit websocket enablement")
+	}
+}
+
+func TestWebsocketsEnabled_NonCodexRequiresExplicitTrue(t *testing.T) {
+	t.Parallel()
+
+	auth := &Auth{
+		Provider: "claude",
+		Metadata: map[string]any{"email": "user@example.com"},
+	}
+	if WebsocketsEnabled(auth) {
+		t.Fatal("expected non-codex auth to require explicit websocket enablement")
+	}
+	auth.Attributes = map[string]string{"websockets": "true"}
+	if !WebsocketsEnabled(auth) {
+		t.Fatal("expected explicit websockets=true to enable non-codex websocket")
+	}
+}
+
 func TestSchedulerPick_RoundRobinHighestPriority(t *testing.T) {
 	t.Parallel()
 
@@ -271,6 +324,37 @@ func TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledSubset(t *testing.T)
 		if got.ID != wantID {
 			t.Fatalf("pickSingle() #%d auth.ID = %q, want %q", index, got.ID, wantID)
 		}
+	}
+}
+
+func TestSchedulerPick_CodexWebsocketPrefersDefaultOAuthWebsocket(t *testing.T) {
+	t.Parallel()
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{
+			ID:         "codex-disabled",
+			Provider:   "codex",
+			Attributes: map[string]string{"websockets": "false"},
+			Metadata:   map[string]any{"email": "disabled@example.com"},
+		},
+		&Auth{
+			ID:       "codex-oauth-default",
+			Provider: "codex",
+			Metadata: map[string]any{"email": "default@example.com"},
+		},
+	)
+
+	ctx := cliproxyexecutor.WithDownstreamWebsocket(context.Background())
+	got, errPick := scheduler.pickSingle(ctx, "codex", "", cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("pickSingle() error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatal("pickSingle() auth = nil")
+	}
+	if got.ID != "codex-oauth-default" {
+		t.Fatalf("pickSingle() auth.ID = %q, want codex-oauth-default", got.ID)
 	}
 }
 

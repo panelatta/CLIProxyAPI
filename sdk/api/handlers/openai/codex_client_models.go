@@ -131,7 +131,6 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 	entry["display_name"] = displayName
 	entry["description"] = description
 	entry["priority"] = 100
-	entry["prefer_websockets"] = false
 	delete(entry, "apply_patch_tool_type")
 	delete(entry, "upgrade")
 	delete(entry, "availability_nux")

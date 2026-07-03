@@ -441,8 +441,8 @@ func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 	if _, ok := custom["available_in_plans"].([]any); !ok {
 		t.Fatalf("expected custom model to use gpt-5.5 available_in_plans fallback, got %#v", custom["available_in_plans"])
 	}
-	if got, _ := custom["prefer_websockets"].(bool); got {
-		t.Fatalf("custom prefer_websockets = %v, want false", custom["prefer_websockets"])
+	if got, _ := custom["prefer_websockets"].(bool); !got {
+		t.Fatalf("custom prefer_websockets = %v, want true", custom["prefer_websockets"])
 	}
 	if _, ok := custom["apply_patch_tool_type"]; ok {
 		t.Fatal("expected custom model to omit apply_patch_tool_type")

@@ -1770,6 +1770,53 @@ func TestWebsocketUpstreamSupportsIncrementalInputForModel(t *testing.T) {
 	}
 }
 
+func TestWebsocketUpstreamSupportsIncrementalInputForCodexOAuthDefault(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth := &coreauth.Auth{
+		ID:       "auth-codex-oauth",
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+		Metadata: map[string]any{"email": "user@example.com"},
+	}
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("Register auth: %v", err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "codex-test-model"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(auth.ID)
+	})
+
+	base := handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager)
+	h := NewOpenAIResponsesAPIHandler(base)
+	if !h.websocketUpstreamSupportsIncrementalInputForModel("codex-test-model") {
+		t.Fatalf("expected codex OAuth upstream to default to websocket-capable for codex-test-model")
+	}
+}
+
+func TestWebsocketUpstreamSupportsIncrementalInputForCodexOAuthExplicitFalse(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	auth := &coreauth.Auth{
+		ID:         "auth-codex-oauth-disabled",
+		Provider:   "codex",
+		Status:     coreauth.StatusActive,
+		Attributes: map[string]string{"websockets": "false"},
+		Metadata:   map[string]any{"email": "user@example.com"},
+	}
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("Register auth: %v", err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "codex-disabled-model"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(auth.ID)
+	})
+
+	base := handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager)
+	h := NewOpenAIResponsesAPIHandler(base)
+	if h.websocketUpstreamSupportsIncrementalInputForModel("codex-disabled-model") {
+		t.Fatalf("expected explicit websockets=false to disable codex OAuth websocket for codex-disabled-model")
+	}
+}
+
 func TestWebsocketUpstreamSupportsIncrementalInputForXAI(t *testing.T) {
 	manager := coreauth.NewManager(nil, nil, nil)
 	auth := &coreauth.Auth{
