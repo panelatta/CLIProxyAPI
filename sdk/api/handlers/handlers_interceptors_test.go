@@ -516,7 +516,12 @@ func TestHandlerStreamChunkErrorBeforePayloadSkipsResponseInterceptors(t *testin
 			}, nil
 		},
 	}
-	handler := newInterceptorHandler(t, model, executor, &sdkconfig.SDKConfig{PassthroughHeaders: true})
+	handler := newInterceptorHandler(t, model, executor, &sdkconfig.SDKConfig{
+		PassthroughHeaders: true,
+		Streaming: sdkconfig.StreamingConfig{
+			BootstrapRetries: -1,
+		},
+	})
 	var responseCalls int
 	var streamCalls int
 	handler.SetPluginHost(&handlerInterceptorTestHost{
