@@ -160,3 +160,26 @@ func TestSaveConfigPreserveCommentsAPIKeyEntriesObjectYAMLWhenNamed(t *testing.T
 	}
 	requireAccessAPIKeys(t, reloaded, []string{"sk-a", "sk-b"}, []string{"Alice laptop", ""})
 }
+
+func TestAPIKeyEntriesForceModelRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	path := writeAPIKeyEntriesConfig(t, "api-keys:\n  - api-key: sk-mengzhe\n    name: mengzhe\n    force-model: gpt-5.6-luna\n")
+	cfg, errLoad := LoadConfigOptional(path, false)
+	if errLoad != nil {
+		t.Fatalf("LoadConfigOptional: %v", errLoad)
+	}
+	if got := cfg.APIKeyEntries[0].ForceModel; got != "gpt-5.6-luna" {
+		t.Fatalf("ForceModel = %q, want gpt-5.6-luna", got)
+	}
+	if errSave := SaveConfigPreserveComments(path, cfg); errSave != nil {
+		t.Fatalf("SaveConfigPreserveComments: %v", errSave)
+	}
+	reloaded, errReload := LoadConfigOptional(path, false)
+	if errReload != nil {
+		t.Fatalf("reload: %v", errReload)
+	}
+	if got := reloaded.APIKeyEntries[0].ForceModel; got != "gpt-5.6-luna" {
+		t.Fatalf("reloaded ForceModel = %q, want gpt-5.6-luna", got)
+	}
+}

@@ -7,17 +7,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AccessAPIKeyEntry stores a client API key plus optional display metadata.
-// APIKey is the only field used to authenticate requests; Name is UI metadata.
+// AccessAPIKeyEntry stores a client API key plus optional per-client settings.
+// APIKey is used to authenticate requests, Name is UI metadata, and ForceModel
+// rewrites model-bearing requests after authentication.
 type AccessAPIKeyEntry struct {
-	APIKey string `yaml:"api-key" json:"api-key"`
-	Name   string `yaml:"name,omitempty" json:"name,omitempty"`
+	APIKey     string `yaml:"api-key" json:"api-key"`
+	Name       string `yaml:"name,omitempty" json:"name,omitempty"`
+	ForceModel string `yaml:"force-model,omitempty" json:"force-model,omitempty"`
 }
 
 func normalizeAccessAPIKeyEntry(entry AccessAPIKeyEntry) AccessAPIKeyEntry {
 	return AccessAPIKeyEntry{
-		APIKey: strings.TrimSpace(entry.APIKey),
-		Name:   strings.TrimSpace(entry.Name),
+		APIKey:     strings.TrimSpace(entry.APIKey),
+		Name:       strings.TrimSpace(entry.Name),
+		ForceModel: strings.TrimSpace(entry.ForceModel),
 	}
 }
 
@@ -49,13 +52,21 @@ func AccessAPIKeyEntriesForKeys(keys []string, existing []AccessAPIKeyEntry) []A
 	}
 
 	namesByKey := make(map[string]string, len(existing))
+	forceModelsByKey := make(map[string]string, len(existing))
 	for _, entry := range existing {
 		entry = normalizeAccessAPIKeyEntry(entry)
-		if entry.APIKey == "" || entry.Name == "" {
+		if entry.APIKey == "" {
 			continue
 		}
-		if _, ok := namesByKey[entry.APIKey]; !ok {
-			namesByKey[entry.APIKey] = entry.Name
+		if entry.Name != "" {
+			if _, ok := namesByKey[entry.APIKey]; !ok {
+				namesByKey[entry.APIKey] = entry.Name
+			}
+		}
+		if entry.ForceModel != "" {
+			if _, ok := forceModelsByKey[entry.APIKey]; !ok {
+				forceModelsByKey[entry.APIKey] = entry.ForceModel
+			}
 		}
 	}
 
@@ -66,16 +77,21 @@ func AccessAPIKeyEntriesForKeys(keys []string, existing []AccessAPIKeyEntry) []A
 			continue
 		}
 		name := ""
+		forceModel := ""
 		if i < len(existing) {
 			candidate := normalizeAccessAPIKeyEntry(existing[i])
 			if candidate.APIKey == key {
 				name = candidate.Name
+				forceModel = candidate.ForceModel
 			}
 		}
 		if name == "" {
 			name = namesByKey[key]
 		}
-		out = append(out, AccessAPIKeyEntry{APIKey: key, Name: name})
+		if forceModel == "" {
+			forceModel = forceModelsByKey[key]
+		}
+		out = append(out, AccessAPIKeyEntry{APIKey: key, Name: name, ForceModel: forceModel})
 	}
 	return out
 }
@@ -119,7 +135,7 @@ func parseAccessAPIKeyEntriesNode(node *yaml.Node) ([]AccessAPIKeyEntry, []strin
 
 func accessAPIKeyEntriesNeedObjectYAML(entries []AccessAPIKeyEntry) bool {
 	for _, entry := range entries {
-		if strings.TrimSpace(entry.Name) != "" {
+		if strings.TrimSpace(entry.Name) != "" || strings.TrimSpace(entry.ForceModel) != "" {
 			return true
 		}
 	}
@@ -150,6 +166,12 @@ func buildAPIKeysYAMLNode(keys []string, entries []AccessAPIKeyEntry) *yaml.Node
 			item.Content = append(item.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "name"},
 				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.Name},
+			)
+		}
+		if entry.ForceModel != "" {
+			item.Content = append(item.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "force-model"},
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.ForceModel},
 			)
 		}
 		node.Content = append(node.Content, item)
