@@ -106,9 +106,12 @@ func (w *Watcher) reloadConfig() bool {
 	}
 
 	w.clientsMutex.Lock()
-	var oldConfig *config.Config
-	_ = yaml.Unmarshal(w.oldConfigYaml, &oldConfig)
+	oldConfig := w.oldConfigSnapshot.CloneForRuntime()
+	if oldConfig == nil {
+		_ = yaml.Unmarshal(w.oldConfigYaml, &oldConfig)
+	}
 	w.oldConfigYaml, _ = yaml.Marshal(newConfig)
+	w.oldConfigSnapshot = newConfig.CloneForRuntime()
 	w.config = newConfig
 	w.clientsMutex.Unlock()
 
@@ -125,9 +128,9 @@ func (w *Watcher) reloadConfig() bool {
 	if oldConfig != nil {
 		details := diff.BuildConfigChangeDetails(oldConfig, newConfig)
 		if len(details) > 0 {
-			log.Debugf("config changes detected:")
+			log.Info("config changes detected:")
 			for _, d := range details {
-				log.Debugf("  %s", d)
+				log.Infof("  %s", d)
 			}
 		} else {
 			log.Debugf("no material config field changes detected")

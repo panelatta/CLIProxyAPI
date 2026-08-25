@@ -81,7 +81,7 @@ func TestAPIKeyEntriesLoadConfigOptional(t *testing.T) {
 func TestAPIKeyEntriesParseConfigBytesMatchesLoad(t *testing.T) {
 	t.Parallel()
 
-	data := []byte("api-keys:\n  - sk-a\n  - api-key: sk-b\n    name: CI runner\n")
+	data := []byte("api-keys:\n  - sk-a\n  - api-key: sk-b\n    name: CI runner\n    force-model: gpt-5.6-luna\n")
 	parsed, err := ParseConfigBytes(data)
 	if err != nil {
 		t.Fatalf("ParseConfigBytes: %v", err)
@@ -96,6 +96,18 @@ func TestAPIKeyEntriesParseConfigBytesMatchesLoad(t *testing.T) {
 	}
 	if !reflect.DeepEqual(parsed.APIKeyEntries, loaded.APIKeyEntries) {
 		t.Fatalf("parsed entries = %#v, loaded entries = %#v", parsed.APIKeyEntries, loaded.APIKeyEntries)
+	}
+}
+
+func TestAPIKeyEntriesNullKeepsLegacyCompatibility(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseConfigBytes([]byte("api-keys:\n"))
+	if err != nil {
+		t.Fatalf("ParseConfigBytes: %v", err)
+	}
+	if len(cfg.APIKeys) != 0 || len(cfg.APIKeyEntries) != 0 {
+		t.Fatalf("null api-keys = keys %#v entries %#v, want empty", cfg.APIKeys, cfg.APIKeyEntries)
 	}
 }
 

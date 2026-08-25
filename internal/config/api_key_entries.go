@@ -100,6 +100,12 @@ func parseAccessAPIKeyEntriesNode(node *yaml.Node) ([]AccessAPIKeyEntry, []strin
 	if node == nil {
 		return nil, nil, nil
 	}
+	if node.Kind == yaml.AliasNode && node.Alias != nil {
+		return parseAccessAPIKeyEntriesNode(node.Alias)
+	}
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
+		return nil, nil, nil
+	}
 	if node.Kind != yaml.SequenceNode {
 		return nil, nil, fmt.Errorf("api-keys must be a sequence")
 	}
@@ -131,6 +137,55 @@ func parseAccessAPIKeyEntriesNode(node *yaml.Node) ([]AccessAPIKeyEntry, []strin
 
 	normalized, keys := normalizeAccessAPIKeyEntries(entries)
 	return normalized, keys, nil
+}
+
+// decodeConfigYAML decodes a config document while accepting both legacy string
+// api-keys entries and object entries carrying display metadata or force-model.
+// Config.APIKeys remains the runtime []string shape; APIKeyEntries keeps the
+// aligned metadata used by management and request policy code.
+func decodeConfigYAML(data []byte, cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config destination is nil")
+	}
+
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return err
+	}
+	if root.Kind == 0 {
+		cfg.NormalizeAccessAPIKeyEntries()
+		return nil
+	}
+
+	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 || root.Content[0] == nil || root.Content[0].Kind != yaml.MappingNode {
+		if err := root.Decode(cfg); err != nil {
+			return err
+		}
+		cfg.NormalizeAccessAPIKeyEntries()
+		return nil
+	}
+
+	mapping := root.Content[0]
+	apiKeys := apiKeysNode(mapping)
+	if apiKeys == nil {
+		if err := root.Decode(cfg); err != nil {
+			return err
+		}
+		cfg.NormalizeAccessAPIKeyEntries()
+		return nil
+	}
+
+	entries, keys, errParse := parseAccessAPIKeyEntriesNode(apiKeys)
+	if errParse != nil {
+		return errParse
+	}
+	replaceAPIKeysNode(mapping, keys, nil)
+	if errDecode := root.Decode(cfg); errDecode != nil {
+		return errDecode
+	}
+	cfg.APIKeyEntries = entries
+	cfg.NormalizeAccessAPIKeyEntries()
+	return nil
 }
 
 func accessAPIKeyEntriesNeedObjectYAML(entries []AccessAPIKeyEntry) bool {

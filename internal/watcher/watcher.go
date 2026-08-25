@@ -62,6 +62,7 @@ type Watcher struct {
 	pluginAuthParser  synthesizer.PluginAuthParser
 	mirroredAuthDir   string
 	oldConfigYaml     []byte
+	oldConfigSnapshot *config.Config
 }
 
 // AuthUpdateAction represents the type of change detected in auth sources.
@@ -139,6 +140,7 @@ func (w *Watcher) SetConfig(cfg *config.Config) {
 	defer w.clientsMutex.Unlock()
 	w.config = cfg
 	w.oldConfigYaml, _ = yaml.Marshal(cfg)
+	w.oldConfigSnapshot = cfg.CloneForRuntime()
 }
 
 // SetPluginAuthParser updates the plugin auth parser used for file auth synthesis.

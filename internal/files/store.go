@@ -46,6 +46,7 @@ type CreateParams struct {
 type Option func(*Store)
 
 type Store struct {
+	reconfigureMu  sync.Mutex
 	mu             sync.Mutex
 	baseDir        string
 	ttl            time.Duration
@@ -96,7 +97,41 @@ func (s *Store) BaseDir() string {
 	if s == nil {
 		return ""
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.baseDir
+}
+
+// ReconfigureBaseDir validates and prepares a new base directory before
+// atomically switching subsequent store operations to it.
+func (s *Store) ReconfigureBaseDir(baseDir string) error {
+	if s == nil {
+		return fmt.Errorf("uploaded file store is not configured")
+	}
+
+	normalizedBaseDir := strings.TrimSpace(baseDir)
+	if normalizedBaseDir == "" {
+		return fmt.Errorf("uploaded file store: base directory is empty")
+	}
+	normalizedBaseDir = filepath.Clean(normalizedBaseDir)
+
+	s.reconfigureMu.Lock()
+	defer s.reconfigureMu.Unlock()
+
+	candidate := NewStore(
+		normalizedBaseDir,
+		WithTTL(s.ttl),
+		WithMaxUploadBytes(s.maxUploadBytes),
+		WithNow(s.now),
+	)
+	if err := candidate.CleanupExpired(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	s.baseDir = candidate.baseDir
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Store) MaxUploadBytes() int64 {

@@ -11,6 +11,7 @@ import (
 )
 
 var benchmarkConvertSystemRoleOutput []byte
+var benchmarkConvertNormalizedOutput []byte
 
 // TestConvertSystemRoleToDeveloper_BasicConversion tests the basic system -> developer role conversion
 func TestConvertSystemRoleToDeveloper_BasicConversion(t *testing.T) {
@@ -262,6 +263,100 @@ func TestConvertOpenAIResponsesRequestToCodex_OriginalIssue(t *testing.T) {
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToCodexReusesNormalizedPayload(t *testing.T) {
+	inputJSON := []byte(`{"model":"gpt-5.6","stream":true,"store":false,"parallel_tool_calls":true,"include":["reasoning.encrypted_content","web_search_call.action.sources"],"service_tier":"priority","input":[{"type":"message","role":"user","content":"hello"}]}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.6", inputJSON, true)
+
+	if &output[0] != &inputJSON[0] {
+		t.Fatal("normalized request payload was copied")
+	}
+	if string(output) != string(inputJSON) {
+		t.Fatalf("normalized request changed:\n got: %s\nwant: %s", output, inputJSON)
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToCodexNormalizesRequiredFields(t *testing.T) {
+	inputJSON := []byte(`{
+		"model":"gpt-5.6",
+		"stream":"true",
+		"store":true,
+		"parallel_tool_calls":false,
+		"include":["file_search_call.results","reasoning.encrypted_content"],
+		"max_output_tokens":4096,
+		"max_completion_tokens":4096,
+		"temperature":0.2,
+		"top_p":0.9,
+		"service_tier":"standard",
+		"truncation":"auto",
+		"prompt_cache_options":{"mode":"implicit"},
+		"prompt_cache_retention":"24h",
+		"user":"request-owner",
+		"input":[{"type":"message","role":"system","content":"hello"}]
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.6", inputJSON, true)
+
+	if stream := gjson.GetBytes(output, "stream"); stream.Type != gjson.True {
+		t.Fatalf("stream = %s, want true", stream.Raw)
+	}
+	if store := gjson.GetBytes(output, "store"); store.Type != gjson.True {
+		t.Fatalf("store = %s, want preserved true", store.Raw)
+	}
+	if parallel := gjson.GetBytes(output, "parallel_tool_calls"); parallel.Type != gjson.True {
+		t.Fatalf("parallel_tool_calls = %s, want true", parallel.Raw)
+	}
+	include := gjson.GetBytes(output, "include").Array()
+	if len(include) != 2 || include[0].String() != "reasoning.encrypted_content" || include[1].String() != "web_search_call.action.sources" {
+		t.Fatalf("include = %s, want the Codex-supported encrypted content and web search sources", gjson.GetBytes(output, "include").Raw)
+	}
+	if instructions := gjson.GetBytes(output, "instructions").String(); instructions != "hello" {
+		t.Fatalf("instructions = %q, want lifted system content", instructions)
+	}
+	if count := gjson.GetBytes(output, "input.#").Int(); count != 0 {
+		t.Fatalf("input count = %d, want 0 after lifting instructions", count)
+	}
+	for _, path := range []string{
+		"max_output_tokens",
+		"max_completion_tokens",
+		"temperature",
+		"top_p",
+		"service_tier",
+		"truncation",
+		"prompt_cache_options",
+		"prompt_cache_retention",
+		"user",
+	} {
+		if gjson.GetBytes(output, path).Exists() {
+			t.Fatalf("%s should be removed: %s", path, output)
+		}
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToCodex_FiltersPromptCacheRetention(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.6-terra",
+		"prompt_cache_retention": "24h",
+		"input": [
+			{
+				"type": "message",
+				"role": "user",
+				"content": [
+					{
+						"type": "input_text",
+						"text": "hello"
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.6-terra", inputJSON, true)
+	if gjson.GetBytes(output, "prompt_cache_retention").Exists() {
+		t.Fatalf("prompt_cache_retention should be removed: %s", string(output))
+	}
+}
+
 // TestConvertSystemRoleToDeveloper_AssistantRole tests that assistant role is preserved
 func TestConvertSystemRoleToDeveloper_AssistantRole(t *testing.T) {
 	inputJSON := []byte(`{
@@ -455,6 +550,90 @@ func TestConvertOpenAIResponsesRequestToCodex_DefaultsStoreFalse(t *testing.T) {
 	}
 }
 
+func TestStripCodexResponsesCacheBreakpoints(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.2",
+		"input": [
+			{
+				"type": "message",
+				"role": "user",
+				"content": [
+					{
+						"type": "input_text",
+						"text": "Hello world",
+						"prompt_cache_breakpoint": {"mode": "explicit"}
+					},
+					{
+						"type": "input_text",
+						"text": "Second part"
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
+	outputStr := string(output)
+
+	if strings.Contains(outputStr, "prompt_cache_breakpoint") {
+		t.Fatalf("prompt_cache_breakpoint should not exist in the output JSON")
+	}
+	if gjson.Get(outputStr, "input.0.content.0.text").String() != "Hello world" {
+		t.Fatalf("text content should be preserved")
+	}
+	if gjson.Get(outputStr, "input.0.content.1.text").String() != "Second part" {
+		t.Fatalf("second content part should be preserved")
+	}
+}
+
+func TestStripCodexResponsesCacheBreakpoints_WithSystemRole(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.2",
+		"input": [
+			{
+				"type": "message",
+				"role": "system",
+				"content": [
+					{
+						"type": "input_text",
+						"text": "System prompt",
+						"prompt_cache_breakpoint": {"mode": "explicit"}
+					}
+				]
+			},
+			{
+				"type": "message",
+				"role": "user",
+				"content": [
+					{
+						"type": "input_text",
+						"text": "User query",
+						"prompt_cache_breakpoint": {"mode": "explicit"}
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
+	outputStr := string(output)
+
+	// The system message is lifted to instructions before the remaining input is normalized.
+	if got := gjson.Get(outputStr, "instructions").String(); got != "System prompt" {
+		t.Fatalf("expected lifted system instructions, got %q", got)
+	}
+	if got := gjson.Get(outputStr, "input.#").Int(); got != 1 {
+		t.Fatalf("expected one user input after lifting instructions, got %d", got)
+	}
+	// Check prompt_cache_breakpoint is completely removed from payload
+	if strings.Contains(outputStr, "prompt_cache_breakpoint") {
+		t.Fatalf("prompt_cache_breakpoint should not exist in the output JSON")
+	}
+	if gjson.Get(outputStr, "input.0.content.0.text").String() != "User query" {
+		t.Fatalf("expected user query text preserved, got %q", gjson.Get(outputStr, "input.0.content.0.text").String())
+	}
+}
+
 func BenchmarkConvertSystemRoleToDeveloperLargeInput(b *testing.B) {
 	cases := []struct {
 		name      string
@@ -510,6 +689,40 @@ func BenchmarkConvertSystemRoleToDeveloperLargeInput(b *testing.B) {
 			})
 		}
 	}
+}
+
+func BenchmarkConvertOpenAIResponsesRequestToCodexNormalizedPayload(b *testing.B) {
+	cases := []struct {
+		name      string
+		inputJSON []byte
+	}{
+		{name: "1KiB", inputJSON: makeNormalizedResponsesRequestForBenchmark(1 << 10)},
+		{name: "1MiB", inputJSON: makeNormalizedResponsesRequestForBenchmark(1 << 20)},
+		{name: "8MiB", inputJSON: makeNormalizedResponsesRequestForBenchmark(8 << 20)},
+	}
+
+	for _, testCase := range cases {
+		b.Run(testCase.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(testCase.inputJSON)))
+			b.ResetTimer()
+
+			var output []byte
+			for b.Loop() {
+				output = ConvertOpenAIResponsesRequestToCodex("gpt-5.6", testCase.inputJSON, true)
+			}
+			benchmarkConvertNormalizedOutput = output
+		})
+	}
+}
+
+func makeNormalizedResponsesRequestForBenchmark(contentBytes int) []byte {
+	var builder strings.Builder
+	builder.Grow(contentBytes + 256)
+	builder.WriteString(`{"model":"gpt-5.6","stream":true,"store":false,"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"input":[{"type":"message","role":"user","content":"`)
+	builder.WriteString(strings.Repeat("x", contentBytes))
+	builder.WriteString(`"}]}`)
+	return []byte(builder.String())
 }
 
 func makeLargeResponsesInputForBenchmark(inputCount int, systemEvery int) []byte {

@@ -21,7 +21,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func TestGenerateAuthURLRequestsImageScope(t *testing.T) {
+func TestGenerateAuthURLUsesSupportedScopes(t *testing.T) {
 	auth := NewCodexAuth(nil)
 	authURL, err := auth.GenerateAuthURL("state", &PKCECodes{CodeChallenge: "challenge"})
 	if err != nil {
@@ -32,8 +32,9 @@ func TestGenerateAuthURLRequestsImageScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse auth URL: %v", err)
 	}
-	if got := parsed.Query().Get("scope"); got != CodexAuthorizeScopes {
-		t.Fatalf("scope = %q, want %q", got, CodexAuthorizeScopes)
+	const wantScopes = "openid email profile offline_access"
+	if got := parsed.Query().Get("scope"); got != wantScopes {
+		t.Fatalf("scope = %q, want %q", got, wantScopes)
 	}
 }
 
@@ -63,6 +64,49 @@ func TestRefreshTokensDoesNotNarrowGrantedScopes(t *testing.T) {
 	}
 	if hasScope {
 		t.Fatal("refresh request should not include scope")
+	}
+}
+
+func TestNewCodexAuthDoesNotSetRequestTimeout(t *testing.T) {
+	if got := NewCodexAuth(nil).httpClient.Timeout; got != 0 {
+		t.Fatalf("HTTP client timeout = %s, want zero", got)
+	}
+}
+
+func TestRefreshTokens_UsesIndependentTimeout(t *testing.T) {
+	resetCodexRefreshGroupForTest()
+	defer resetCodexRefreshGroupForTest()
+
+	callerCtx, cancelCaller := context.WithCancel(context.Background())
+	cancelCaller()
+	var requestDeadline time.Time
+	auth := &CodexAuth{
+		httpClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				var ok bool
+				requestDeadline, ok = req.Context().Deadline()
+				if !ok {
+					t.Fatal("refresh request has no deadline")
+				}
+				if errContext := req.Context().Err(); errContext != nil {
+					t.Fatalf("refresh request context is already done: %v", errContext)
+				}
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Body:       io.NopCloser(strings.NewReader(`{"error":"probe"}`)),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			}),
+		},
+	}
+
+	_, err := auth.RefreshTokens(callerCtx, "independent-timeout-token")
+	if err == nil {
+		t.Fatal("expected refresh error")
+	}
+	if requestDeadline.IsZero() || !requestDeadline.After(time.Now()) {
+		t.Fatalf("refresh deadline = %v, want a future deadline", requestDeadline)
 	}
 }
 
