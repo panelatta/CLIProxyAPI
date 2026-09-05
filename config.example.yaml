@@ -138,6 +138,8 @@ proxy-url: ""
 force-model-prefix: false
 
 # When true, forward filtered upstream response headers to downstream clients.
+# Enable this to expose Codex OAuth quota headers to Codex CLI (/status).
+# Event-to-header bridging also requires codex.stream-bootstrap-buffering (default true).
 # Default is false (disabled).
 passthrough-headers: false
 
