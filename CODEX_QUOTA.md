@@ -32,6 +32,10 @@ original `codex.rate_limits` events.
   window is not mislabeled as a five-hour window.
 - Reset timestamps and credits are forwarded. If only a relative reset delay is
   supplied, the proxy converts it to the absolute Unix timestamp read by Codex CLI.
+- The event-to-header bridge sends the main account windows and credits only.
+  Codex CLI 0.153.4 coalesces multiple header limit families into the last snapshot,
+  so including additional model or code-review limits would hide the main account
+  quota. The original WebSocket events and backend quota observations retain them.
 - Quota snapshots are request-local. Connection reuse reads each request's new
   quota event, and failed bootstrap attempts do not contribute successful-response
   headers. There is no shared quota cache or account aggregation.

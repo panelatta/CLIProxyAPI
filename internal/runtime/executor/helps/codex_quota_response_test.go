@@ -43,3 +43,11 @@ func TestCodexQuotaResponseHeadersIgnoresNonSnapshots(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexQuotaResponseHeadersKeepsAccountQuotaWhenAdditionalLimitsExist(t *testing.T) {
+	payload := []byte(`{"type":"codex.rate_limits","rate_limits":{"primary":{"used_percent":11,"window_minutes":10080,"reset_at":1788847375}},"additional_rate_limits":{"GPT-5.3-Codex-Spark":{"primary":{"used_percent":0,"window_minutes":300,"reset_at":1788847375}}},"code_review_rate_limits":{"primary":{"used_percent":4,"window_minutes":300,"reset_at":1788847375}}}`)
+	got := CodexQuotaResponseHeaders(nil, payload, time.Unix(1700000000, 0))
+	if len(got) != 3 || got.Get("X-Codex-Primary-Used-Percent") != "11" || got.Get("X-Codex-Primary-Window-Minutes") != "10080" {
+		t.Fatalf("account quota was polluted by an additional limit family: %v", got)
+	}
+}

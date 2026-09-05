@@ -31,6 +31,15 @@ func CodexQuotaResponseHeaders(headers http.Header, payload []byte, observedAt t
 		}
 	}
 	for key, values := range quota {
+		// Codex CLI coalesces header snapshots before emitting token usage,
+		// keeping only the last limit family. Sending additional/code-review
+		// families here would replace the account quota with an unrelated limit.
+		// Keep those in the original websocket event and logging representation.
+		if !strings.HasPrefix(key, "X-Codex-Primary-") &&
+			!strings.HasPrefix(key, "X-Codex-Secondary-") &&
+			!strings.HasPrefix(key, "X-Codex-Credits-") && key != "X-Codex-Plan-Type" {
+			continue
+		}
 		headers[key] = values
 		const suffix = "-Reset-After-Seconds"
 		if !strings.HasSuffix(key, suffix) {
