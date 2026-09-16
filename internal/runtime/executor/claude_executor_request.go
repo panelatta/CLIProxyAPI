@@ -394,8 +394,9 @@ func (e claudeRateLimitError) IsRequestScoped() bool {
 	return false
 }
 
-// classifyClaudeUpstreamError promotes upstream refusals that no other credential
-// can satisfy into request-scoped errors.
+// classifyClaudeUpstreamError promotes known feature-entitlement refusals into
+// request-scoped errors so a feature-specific request does not penalize otherwise
+// healthy credentials.
 //
 // Anthropic answers a fast-mode request from an account without the matching
 // usage credits with 429 rate_limit_error "Usage credits are required for fast
@@ -410,6 +411,15 @@ func classifyClaudeUpstreamError(statusCode int, headers http.Header, body []byt
 		retryAfter = helps.ParseClaudeRateLimitReset(headers, time.Now())
 	}
 	err := statusErr{code: statusCode, msg: string(body), retryAfter: retryAfter}
+	// Keep this allowlist narrow: a generic permission_error can still indicate
+	// a revoked key, a disabled organization, or missing credential scopes.
+	if statusCode == http.StatusForbidden && gjson.ValidBytes(body) &&
+		gjson.GetBytes(body, "error.type").String() == "permission_error" {
+		message := strings.TrimSuffix(strings.TrimSpace(gjson.GetBytes(body, "error.message").String()), ".")
+		if strings.EqualFold(message, "Web search is disabled for this organization") {
+			return claudeEntitlementError{err}
+		}
+	}
 	if statusCode == http.StatusTooManyRequests {
 		if helps.ClaudeHeadersIndicateUnifiedRateLimitRejection(headers) {
 			return claudeRateLimitError{statusErr: err, credentialScoped: true}
