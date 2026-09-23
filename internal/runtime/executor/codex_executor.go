@@ -99,3 +99,7 @@ func codexImageGenerationsEndpoint(baseURL string) string {
 	}
 	return strings.TrimSuffix(baseURL, "/") + "/images/generations"
 }
+
+func (e *CodexExecutor) modelLevelCooling() bool {
+	return e != nil && e.cfg != nil && e.cfg.Codex.ModelLevelCooling
+}
