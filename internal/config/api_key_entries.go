@@ -148,42 +148,9 @@ func decodeConfigYAML(data []byte, cfg *Config) error {
 		return fmt.Errorf("config destination is nil")
 	}
 
-	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
+	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return err
 	}
-	if root.Kind == 0 {
-		cfg.NormalizeAccessAPIKeyEntries()
-		return nil
-	}
-
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 || root.Content[0] == nil || root.Content[0].Kind != yaml.MappingNode {
-		if err := root.Decode(cfg); err != nil {
-			return err
-		}
-		cfg.NormalizeAccessAPIKeyEntries()
-		return nil
-	}
-
-	mapping := root.Content[0]
-	apiKeys := apiKeysNode(mapping)
-	if apiKeys == nil {
-		if err := root.Decode(cfg); err != nil {
-			return err
-		}
-		cfg.NormalizeAccessAPIKeyEntries()
-		return nil
-	}
-
-	entries, keys, errParse := parseAccessAPIKeyEntriesNode(apiKeys)
-	if errParse != nil {
-		return errParse
-	}
-	replaceAPIKeysNode(mapping, keys, nil)
-	if errDecode := root.Decode(cfg); errDecode != nil {
-		return errDecode
-	}
-	cfg.APIKeyEntries = entries
 	cfg.NormalizeAccessAPIKeyEntries()
 	return nil
 }

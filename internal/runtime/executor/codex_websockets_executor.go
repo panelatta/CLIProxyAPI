@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 // CodexWebsocketsExecutor executes Codex Responses requests using a WebSocket transport.
@@ -91,7 +91,9 @@ func (e *CodexAutoExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 		if err == nil {
 			return result, nil
 		}
-		if shouldFallbackCodexWebsocketStream(ctx, err) {
+		// Downstream WebSocket sessions own their replay lifecycle. Do not replay a
+		// terminal response.create error through an independent HTTP request.
+		if !cliproxyexecutor.DownstreamWebsocket(ctx) && shouldFallbackCodexWebsocketStream(ctx, err) {
 			if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
 				return nil, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
 			}
@@ -154,4 +156,9 @@ func (e *CodexAutoExecutor) UpstreamDisconnectChan(sessionID string) <-chan erro
 
 func codexWebsocketsEnabled(auth *cliproxyauth.Auth) bool {
 	return cliproxyauth.WebsocketsEnabled(auth)
+}
+
+// SupportsApplyPatch requires both selectable transports to support the tool.
+func (e *CodexAutoExecutor) SupportsApplyPatch() bool {
+	return e != nil && e.httpExec != nil && e.wsExec != nil && e.httpExec.SupportsApplyPatch() && e.wsExec.SupportsApplyPatch()
 }

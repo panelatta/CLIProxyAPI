@@ -20,16 +20,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
-	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executionregistry"
-	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executionregistry"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	"github.com/tidwall/gjson"
 )
 
@@ -493,6 +493,10 @@ func TestForwardResponsesWebsocketMirrorsMappedMessageTooBig(t *testing.T) {
 				msg:    `{"error":{"message":"upstream websocket message too big","code":"message_too_big"}}`,
 			},
 		}
+
+		// Closing data must not hide the buffered terminal error.
+		close(data)
+		close(errCh)
 
 		h := NewOpenAIResponsesAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil))
 		_, _, _, errMsg, errForward := h.forwardResponsesWebsocket(
@@ -3622,7 +3626,7 @@ func TestResponsesWebsocketFullRequestCanRouteFromNativeWebsocketToBuiltInProvid
 	}
 }
 
-func TestResponsesWebsocketReportsProviderRouteTerminalAuthFailure(t *testing.T) {
+func TestResponsesWebsocketHidesProviderRouteAuthFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	const sourceModel = "codex-provider-route-failure-source"
@@ -3677,18 +3681,8 @@ func TestResponsesWebsocketReportsProviderRouteTerminalAuthFailure(t *testing.T)
 	if errWrite := conn.WriteMessage(websocket.TextMessage, []byte(routedRequest)); errWrite != nil {
 		t.Fatalf("write routed request: %v", errWrite)
 	}
-	_, response, errRead := conn.ReadMessage()
-	if errRead != nil {
-		t.Fatalf("terminal credential error was hidden: %v", errRead)
-	}
-	if got := gjson.GetBytes(response, "status").Int(); got != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503: %s", got, response)
-	}
-	if got := gjson.GetBytes(response, "error.code").String(); got != "upstream_authentication_required" {
-		t.Fatalf("error.code = %q, want upstream_authentication_required: %s", got, response)
-	}
-	if strings.Contains(string(response), "routed provider failed") {
-		t.Fatalf("upstream credential detail was exposed: %s", response)
+	if _, response, errRead := conn.ReadMessage(); errRead == nil {
+		t.Fatalf("credential error was exposed to the client: %s", response)
 	}
 
 	if got := len(codexExecutor.Payloads()); got != 1 {

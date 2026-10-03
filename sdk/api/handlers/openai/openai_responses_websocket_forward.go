@@ -13,10 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -74,6 +74,15 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 
 	for {
 		if data == nil && errs == nil {
+			if opts.duplexStream != nil && opts.duplexStream() {
+				// Drain both channels before closing so a buffered terminal error is delivered.
+				_, errClose := writer.closeWithoutError()
+				cancel(nil)
+				if errClose != nil {
+					return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, errClose
+				}
+				return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, websocket.ErrCloseSent
+			}
 			if !completed {
 				errMsg := &interfaces.ErrorMessage{
 					StatusCode: http.StatusRequestTimeout,
@@ -139,32 +148,11 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 			return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), errMsg, errTerminate
 		case chunk, ok := <-data:
 			if !ok {
-				if opts.duplexStream != nil && opts.duplexStream() {
-					// A duplex stream ends with its socket, not an individual response.
-					// The data channel may close before select observes its final error.
-					_, errClose := writer.closeWithoutError()
-					cancel(nil)
-					if errClose != nil {
-						return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, errClose
-					}
-					return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, websocket.ErrCloseSent
-				}
-				if !completed {
-					errMsg := &interfaces.ErrorMessage{
-						StatusCode: http.StatusRequestTimeout,
-						Error:      fmt.Errorf("stream closed before response.completed"),
-					}
-					h.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
-					markAPIResponseTimestamp(c)
-					_, errClose := writer.closeWithoutError()
-					cancel(errMsg.Error)
-					if errClose != nil {
-						return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), errMsg, errClose
-					}
-					return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), errMsg, websocket.ErrCloseSent
-				}
-				cancel(nil)
-				return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, nil
+				// The producer closes both channels, but select can observe the data
+				// closure before a buffered terminal error. Drain errs before deciding
+				// whether this was an incomplete response or a successful completion.
+				data = nil
+				continue
 			}
 			if keepAliveTicker != nil && keepAliveInterval > 0 {
 				keepAliveTicker.Reset(keepAliveInterval)

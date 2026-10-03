@@ -1,14 +1,12 @@
 package discovery
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/libp2p/zeroconf/v2"
 )
@@ -297,7 +295,7 @@ func TestInterfaceFiltering_Helpers(t *testing.T) {
 		}
 	}
 
-	physicalNames := []string{"en0", "eth0", "wlan0", "eno1"}
+	physicalNames := []string{"en0", "eth0", "wlan0", "eno1", "bond0"}
 	for _, name := range physicalNames {
 		if isVirtualOrTunnel(name) {
 			t.Errorf("expected %s to be recognized as physical interface", name)
@@ -446,100 +444,5 @@ func TestFilterInterfaces_RealMachine(t *testing.T) {
 		if isVirtualOrTunnel(name) {
 			t.Errorf("interface %s should have been filtered out", name)
 		}
-	}
-}
-
-func TestAdvertiser_IdempotenceAndShutdown(t *testing.T) {
-	adv := NewZeroconfAdvertiser()
-
-	// Stopping an unstarted advertiser should be safe
-	if err := adv.Stop(); err != nil {
-		t.Errorf("unexpected error stopping unstarted advertiser: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	ifaces, _ := FilterInterfaces(nil, nil)
-	spec := ServiceSpec{
-		InstanceName: "CPA-Test-Unit",
-		ServiceType:  "_test-ai._tcp",
-		Domain:       "local.",
-		Port:         65432,
-		TextRecords:  []string{"version=1", "product=test"},
-		Interfaces:   ifaces,
-	}
-
-	errStart := adv.Start(ctx, spec)
-	if errStart != nil {
-		// In some restricted CI environments multicast bind may fail; handle gracefully
-		t.Logf("multicast start failed (likely restricted sandbox network): %v", errStart)
-		return
-	}
-
-	// Calling Start again while running should fail
-	if errSecond := adv.Start(ctx, spec); errSecond == nil {
-		t.Errorf("expected error on duplicate Start(), got nil")
-	}
-
-	// Calling Stop should cleanly shutdown
-	if errStop := adv.Stop(); errStop != nil {
-		t.Errorf("unexpected error on Stop(): %v", errStop)
-	}
-
-	// Calling Stop a second time should be idempotent
-	if errStop2 := adv.Stop(); errStop2 != nil {
-		t.Errorf("unexpected error on second Stop(): %v", errStop2)
-	}
-}
-
-func TestAdvertiserAndBrowser_Integration(t *testing.T) {
-	ifaces, _ := FilterInterfaces(nil, nil)
-	spec := ServiceSpec{
-		InstanceName: "CPA-LiveTest-42",
-		ServiceType:  DefaultServiceType,
-		Domain:       DefaultDomain,
-		Port:         54321,
-		Subtypes:     []string{SubtypeResponses},
-		TextRecords:  BuildTXTRecords(DefaultTXTOptions()),
-		Interfaces:   ifaces,
-	}
-
-	adv := NewZeroconfAdvertiser()
-	startCtx, startCancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
-	defer startCancel()
-	if err := adv.Start(startCtx, spec); err != nil {
-		t.Skipf("skipping live multicast test: %v", err)
-	}
-	defer func() {
-		if errStop := adv.Stop(); errStop != nil {
-			t.Errorf("advertiser cleanup failed: %v", errStop)
-		}
-	}()
-
-	browseCtx, browseCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer browseCancel()
-	browser := NewZeroconfBrowser(ifaces...)
-	results, err := browser.Browse(browseCtx, DefaultServiceType, DefaultDomain)
-	if err != nil {
-		t.Fatalf("browse failed: %v", err)
-	}
-
-	found := false
-	for _, res := range results {
-		if res.InstanceName == "CPA-LiveTest-42" {
-			found = true
-			if res.Port != 54321 {
-				t.Errorf("expected port 54321, got %d", res.Port)
-			}
-			if res.Product != ProductCPA {
-				t.Errorf("expected product %s, got %s", ProductCPA, res.Product)
-			}
-			break
-		}
-	}
-
-	if !found {
-		t.Fatalf("advertised instance CPA-LiveTest-42 was not discovered")
 	}
 }

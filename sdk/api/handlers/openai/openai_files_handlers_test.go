@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	internalfiles "github.com/router-for-me/CLIProxyAPI/v7/internal/files"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
-	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
+	internalfiles "github.com/router-for-me/CLIProxyAPI/v8/internal/files"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
 func TestOpenAIFilesCreateReturnsObject(t *testing.T) {

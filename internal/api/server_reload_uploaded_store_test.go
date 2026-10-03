@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	internalfiles "github.com/router-for-me/CLIProxyAPI/v7/internal/files"
+	internalfiles "github.com/router-for-me/CLIProxyAPI/v8/internal/files"
 )
 
 func TestUpdateClientsContextReconfiguresUploadedFileStore(t *testing.T) {

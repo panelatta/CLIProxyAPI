@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 const (
@@ -103,3 +103,6 @@ func codexImageGenerationsEndpoint(baseURL string) string {
 func (e *CodexExecutor) modelLevelCooling() bool {
 	return e != nil && e.cfg != nil && e.cfg.Codex.ModelLevelCooling
 }
+
+// SupportsApplyPatch reports the actual executor contract, independent of its provider name.
+func (e *CodexExecutor) SupportsApplyPatch() bool { return e != nil }
