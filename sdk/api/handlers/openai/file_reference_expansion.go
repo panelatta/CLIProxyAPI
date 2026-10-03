@@ -172,13 +172,21 @@ func expandResponsesFilePart(node map[string]any, store *internalfiles.Store, tr
 		return false, nil
 	}
 
-	record, dataURL, err := resolveReferencedFile(store, fileID)
+	record, data, err := resolveReferencedFile(store, fileID)
 	if err != nil {
 		return false, err
 	}
+	text, textual, errText := internalfiles.UploadedText(record, data)
+	if errText != nil {
+		return false, errText
+	}
 	tracker.Add(fileID)
 
-	node["file_data"] = dataURL
+	if textual {
+		replaceFilePartWithText(node, "input_text", text)
+		return true, nil
+	}
+	node["file_data"] = fileDataURL(record, data)
 	if record.Filename != "" {
 		node["filename"] = record.Filename
 	}
@@ -198,16 +206,24 @@ func expandChatFilePart(node map[string]any, store *internalfiles.Store, tracker
 		return false, nil
 	}
 
-	record, dataURL, err := resolveReferencedFile(store, fileID)
+	record, data, err := resolveReferencedFile(store, fileID)
 	if err != nil {
 		return false, err
 	}
+	text, textual, errText := internalfiles.UploadedText(record, data)
+	if errText != nil {
+		return false, errText
+	}
 	tracker.Add(fileID)
 
+	if textual {
+		replaceFilePartWithText(node, "text", text)
+		return true, nil
+	}
 	if fileMap == nil {
 		fileMap = make(map[string]any)
 	}
-	fileMap["file_data"] = dataURL
+	fileMap["file_data"] = fileDataURL(record, data)
 	if record.Filename != "" {
 		fileMap["filename"] = record.Filename
 	}
@@ -232,19 +248,31 @@ func referencedFileID(node map[string]any) string {
 	return strings.TrimSpace(stringValue(fileMap["file_id"]))
 }
 
-func resolveReferencedFile(store *internalfiles.Store, fileID string) (*internalfiles.Record, string, error) {
+func replaceFilePartWithText(node map[string]any, contentType, text string) {
+	for _, key := range []string{"file", "file_id", "file_data", "file_url", "filename"} {
+		delete(node, key)
+	}
+	node["type"] = contentType
+	node["text"] = text
+}
+
+func resolveReferencedFile(store *internalfiles.Store, fileID string) (*internalfiles.Record, []byte, error) {
 	if store == nil {
-		return nil, "", fmt.Errorf("uploaded file store is not configured")
+		return nil, nil, fmt.Errorf("uploaded file store is not configured")
 	}
 	record, data, err := store.Get(fileID)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
+	return record, data, nil
+}
+
+func fileDataURL(record *internalfiles.Record, data []byte) string {
 	mimeType := strings.TrimSpace(record.MIMEType)
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
-	return record, "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
 func cleanupUploadedFilesAfterSuccess(store *internalfiles.Store, fileIDs []string) {
