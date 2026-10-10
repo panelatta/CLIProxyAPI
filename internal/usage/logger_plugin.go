@@ -89,12 +89,16 @@ type modelStats struct {
 
 // RequestDetail stores the timestamp, latency, and token usage for a single request.
 type RequestDetail struct {
-	Timestamp time.Time  `json:"timestamp"`
-	LatencyMs int64      `json:"latency_ms"`
-	Source    string     `json:"source"`
-	AuthIndex string     `json:"auth_index"`
-	Tokens    TokenStats `json:"tokens"`
-	Failed    bool       `json:"failed"`
+	Provider     string        `json:"provider,omitempty"`
+	AuthType     string        `json:"auth_type,omitempty"`
+	CompletedAt  time.Time     `json:"completed_at,omitempty"`
+	QuotaWindows []QuotaWindow `json:"quota_windows,omitempty"`
+	Timestamp    time.Time     `json:"timestamp"`
+	LatencyMs    int64         `json:"latency_ms"`
+	Source       string        `json:"source"`
+	AuthIndex    string        `json:"auth_index"`
+	Tokens       TokenStats    `json:"tokens"`
+	Failed       bool          `json:"failed"`
 }
 
 // TokenStats captures the token usage breakdown for a request.
@@ -110,10 +114,11 @@ type TokenStats struct {
 
 // StatisticsSnapshot represents an immutable view of the aggregated metrics.
 type StatisticsSnapshot struct {
-	TotalRequests int64 `json:"total_requests"`
-	SuccessCount  int64 `json:"success_count"`
-	FailureCount  int64 `json:"failure_count"`
-	TotalTokens   int64 `json:"total_tokens"`
+	OAuthAccounts []OAuthAccount `json:"oauth_accounts,omitempty"`
+	TotalRequests int64          `json:"total_requests"`
+	SuccessCount  int64          `json:"success_count"`
+	FailureCount  int64          `json:"failure_count"`
+	TotalTokens   int64          `json:"total_tokens"`
 
 	APIs map[string]APISnapshot `json:"apis"`
 
@@ -199,13 +204,22 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		stats = &apiStats{Models: make(map[string]*modelStats)}
 		s.apis[statsKey] = stats
 	}
+	completedAt := timestamp.Add(record.Latency)
+	var windows []QuotaWindow
+	if record.AuthType == "oauth" {
+		windows = ParseQuotaWindows(record.Provider, record.ResponseHeaders, completedAt)
+	}
 	s.updateAPIStats(stats, modelName, RequestDetail{
-		Timestamp: timestamp,
-		LatencyMs: normaliseLatency(record.Latency),
-		Source:    record.Source,
-		AuthIndex: record.AuthIndex,
-		Tokens:    detail,
-		Failed:    failed,
+		Provider:     record.Provider,
+		AuthType:     record.AuthType,
+		CompletedAt:  completedAt,
+		QuotaWindows: windows,
+		Timestamp:    timestamp,
+		LatencyMs:    normaliseLatency(record.Latency),
+		Source:       record.Source,
+		AuthIndex:    record.AuthIndex,
+		Tokens:       detail,
+		Failed:       failed,
 	})
 
 	s.requestsByDay[dayKey]++
@@ -215,6 +229,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 }
 
 func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail RequestDetail) {
+	detail.QuotaWindows = append([]QuotaWindow(nil), detail.QuotaWindows...)
 	stats.TotalRequests++
 	stats.TotalTokens += detail.Tokens.TotalTokens
 	modelStatsValue, ok := stats.Models[model]
@@ -252,6 +267,9 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 		for modelName, modelStatsValue := range stats.Models {
 			requestDetails := make([]RequestDetail, len(modelStatsValue.Details))
 			copy(requestDetails, modelStatsValue.Details)
+			for index := range requestDetails {
+				requestDetails[index].QuotaWindows = append([]QuotaWindow(nil), requestDetails[index].QuotaWindows...)
+			}
 			apiSnapshot.Models[modelName] = ModelSnapshot{
 				TotalRequests: modelStatsValue.TotalRequests,
 				TotalTokens:   modelStatsValue.TotalTokens,

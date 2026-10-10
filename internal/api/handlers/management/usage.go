@@ -39,6 +39,26 @@ func (h *Handler) GetUsageStatistics(c *gin.Context) {
 	if h != nil && h.usageStats != nil {
 		snapshot = h.usageStats.Snapshot()
 	}
+	if h != nil && h.authManager != nil {
+		for _, auth := range h.authManager.List() {
+			if auth == nil || auth.AuthKind() != "oauth" {
+				continue
+			}
+			headers := make(http.Header)
+			for key, value := range auth.Quota.Signals {
+				headers.Set(key, value)
+			}
+			name := auth.Label
+			if name == "" {
+				name = auth.FileName
+			}
+			snapshot.OAuthAccounts = append(snapshot.OAuthAccounts, usage.OAuthAccount{
+				AuthIndex: auth.EnsureIndex(), Provider: auth.Provider, Name: name,
+				ObservedAt: auth.Quota.ObservedAt,
+				Windows:    usage.ParseQuotaWindows(auth.Provider, headers, auth.Quota.ObservedAt),
+			})
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"usage":           snapshot,
 		"failed_requests": snapshot.FailureCount,

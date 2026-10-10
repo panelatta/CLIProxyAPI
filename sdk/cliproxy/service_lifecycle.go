@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	usagestats "github.com/router-for-me/CLIProxyAPI/v8/internal/usage"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -54,6 +57,19 @@ func (s *Service) Run(ctx context.Context) error {
 	if homeEnabled {
 		forceHomeRuntimeConfig(s.cfg)
 		redisqueue.SetUsageStatisticsEnabled(true)
+	}
+
+	if s.cfg != nil && s.cfg.UsageStatisticsEnabled && strings.TrimSpace(s.cfg.UsageHistoryFile) != "" {
+		historyPath := s.cfg.UsageHistoryFile
+		if !filepath.IsAbs(historyPath) {
+			historyPath = filepath.Join(filepath.Dir(s.configPath), historyPath)
+		}
+		stopHistory, errHistory := usagestats.GetRequestStatistics().StartPersistence(historyPath)
+		if errHistory != nil {
+			log.Errorf("usage history unavailable: %v", errHistory)
+		} else {
+			defer stopHistory()
+		}
 	}
 
 	defer func() {
@@ -352,6 +368,9 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		}
 
 		usage.StopDefault()
+		if errDrain := usage.DefaultManager().Wait(ctx); errDrain != nil {
+			log.Warnf("usage queue drain interrupted: %v", errDrain)
+		}
 	})
 	return shutdownErr
 }
