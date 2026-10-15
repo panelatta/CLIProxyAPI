@@ -70,6 +70,12 @@ func NewTerminalAuthError(err *Error, cause error) error {
 	if err == nil {
 		return nil
 	}
+	// A 5xx makes clients retry even when the JSON says retryable=false.
+	// 403 also avoids suggesting that the caller's CPA API key needs refreshing.
+	normalized := *err
+	normalized.HTTPStatus = http.StatusForbidden
+	normalized.Retryable = false
+	err = &normalized
 	base := WithCause(err, cause)
 	if ewc, ok := base.(*errorWithCause); ok && ewc != nil {
 		return &terminalAuthError{errorWithCause: ewc}

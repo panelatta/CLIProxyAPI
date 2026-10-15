@@ -96,6 +96,7 @@ func BuildErrorResponseBodyWithError(status int, errText string, err error) []by
 				}
 			}
 		}
+		message += "; upstream OAuth authorization requires signing in again through the CPA management interface."
 		r := false
 		payload, errMarshal := json.Marshal(ErrorResponse{
 			Error: ErrorDetail{

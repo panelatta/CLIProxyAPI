@@ -701,7 +701,7 @@ func (m *Manager) refreshAuthForRequestAtEpoch(ctx context.Context, id, failedAc
 					current.StatusMessage = "disabled"
 				}
 				shouldReschedule = true
-			} else if accessTokenRejected && invalidGrant {
+			} else if accessTokenRejected && (invalidGrant || unauthorized) {
 				// Neither token can recover without a new login. Stop selecting the
 				// credential until its tokens change instead of retrying it after
 				// every cooldown and returning the same 401 to clients.
@@ -906,4 +906,17 @@ func (m *Manager) ForceRefreshAll(ctx context.Context) []ForceRefreshResult {
 	}
 	wg.Wait()
 	return results
+}
+
+// terminalRefreshFailure preserves a failed refresh on the triggering request,
+// while the caller continues trying other credentials before returning it.
+func (m *Manager) terminalRefreshFailure(auth *Auth, err error) error {
+	if auth == nil || !isUnauthorizedError(err) || isRequestScopedError(err) {
+		return err
+	}
+	current, ok := m.GetByID(auth.ID)
+	if !ok || current.RegistrationEpoch != auth.RegistrationEpoch || !hasUnauthorizedAuthFailure(current) {
+		return err
+	}
+	return NewTerminalAuthError(&Error{Code: "auth_unavailable", Message: "upstream OAuth authorization is no longer valid; sign in again through the CPA management interface", HTTPStatus: http.StatusForbidden}, current.LastError)
 }

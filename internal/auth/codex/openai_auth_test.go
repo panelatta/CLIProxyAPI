@@ -115,30 +115,21 @@ func resetCodexRefreshGroupForTest() {
 }
 
 func TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce(t *testing.T) {
-	var calls int32
-	auth := &CodexAuth{
-		httpClient: &http.Client{
-			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	for _, code := range []string{"invalid_grant", "refresh_token_reused", "refresh_token_invalidated", "refresh_token_expired"} {
+		t.Run(code, func(t *testing.T) {
+			var calls int32
+			auth := &CodexAuth{httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				atomic.AddInt32(&calls, 1)
-				return &http.Response{
-					StatusCode: http.StatusBadRequest,
-					Body:       io.NopCloser(strings.NewReader(`{"error":"invalid_grant","code":"refresh_token_reused"}`)),
-					Header:     make(http.Header),
-					Request:    req,
-				}, nil
-			}),
-		},
-	}
-
-	_, err := auth.RefreshTokensWithRetry(context.Background(), "dummy_refresh_token", 3)
-	if err == nil {
-		t.Fatalf("expected error for non-retryable refresh failure")
-	}
-	if !strings.Contains(strings.ToLower(err.Error()), "refresh_token_reused") {
-		t.Fatalf("expected refresh_token_reused in error, got: %v", err)
-	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Fatalf("expected 1 refresh attempt, got %d", got)
+				return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"Please log in again.","code":"` + code + `"}}`)), Header: make(http.Header), Request: req}, nil
+			})}}
+			_, err := auth.RefreshTokensWithRetry(context.Background(), "fixture-"+code, 3)
+			if err == nil || !strings.Contains(err.Error(), code) {
+				t.Fatalf("refresh error = %v", err)
+			}
+			if calls != 1 {
+				t.Fatalf("refresh attempts = %d, want 1", calls)
+			}
+		})
 	}
 }
 

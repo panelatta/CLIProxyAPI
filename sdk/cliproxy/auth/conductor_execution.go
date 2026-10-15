@@ -99,7 +99,7 @@ func preferredExecutionAttemptError(fallback, upstream error) error {
 	if errors.Is(fallback, context.Canceled) || errors.Is(fallback, context.DeadlineExceeded) {
 		return fallback
 	}
-	if upstream == nil {
+	if upstream == nil || (IsTerminalAuthError(fallback) && isUnauthorizedError(upstream)) {
 		return fallback
 	}
 	var exhausted *homeRetryRoundExhaustedError
@@ -680,7 +680,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			if isResponsesCompactRequestFaultError(opts, authErr) || isRequestInvalidError(authErr) {
 				return cliproxyexecutor.Response{}, authErr
 			}
-			lastErr = authErr
+			lastErr = m.terminalRefreshFailure(auth, authErr)
 			if homeMode {
 				homeAuthCount++
 			}
@@ -893,7 +893,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			if isRequestInvalidError(authErr) {
 				return cliproxyexecutor.Response{}, authErr
 			}
-			lastErr = authErr
+			lastErr = m.terminalRefreshFailure(auth, authErr)
 			if homeMode {
 				homeAuthCount++
 			}

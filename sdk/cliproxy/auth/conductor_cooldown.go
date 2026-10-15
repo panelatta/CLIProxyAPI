@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	internalauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
@@ -1881,7 +1882,7 @@ func isModelSupportError(err error) bool {
 }
 
 func isInvalidGrantErrorMessage(message string) bool {
-	return strings.Contains(strings.ToLower(message), "invalid_grant")
+	return internalauth.IsInvalidRefreshCredential(message)
 }
 
 func isInvalidGrantError(err error) bool {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	internalauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	log "github.com/sirupsen/logrus"
@@ -346,8 +347,7 @@ func isNonRetryableRefreshErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	raw := strings.ToLower(err.Error())
-	return strings.Contains(raw, "refresh_token_reused")
+	return internalauth.IsInvalidRefreshCredential(err.Error())
 }
 
 // UpdateTokenStorage updates an existing CodexTokenStorage with new token data.

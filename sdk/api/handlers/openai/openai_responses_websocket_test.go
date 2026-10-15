@@ -3273,8 +3273,8 @@ func TestResponsesWebsocketExposesTerminalOAuthError(t *testing.T) {
 	if got := gjson.GetBytes(payload, "type").String(); got != "error" {
 		t.Fatalf("type = %q, want error: %s", got, payload)
 	}
-	if got := gjson.GetBytes(payload, "status").Int(); got != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503: %s", got, payload)
+	if got := gjson.GetBytes(payload, "status").Int(); got != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", got, payload)
 	}
 	if got := gjson.GetBytes(payload, "error.type").String(); got != "authentication_error" {
 		t.Fatalf("error.type = %q, want authentication_error: %s", got, payload)

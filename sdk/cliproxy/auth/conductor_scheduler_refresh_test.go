@@ -141,8 +141,8 @@ func TestManager_TerminalOAuthFailure_ReturnsTerminalAuthError(t *testing.T) {
 			if authErr.Retryable {
 				t.Fatal("expected Retryable to be false for terminal unauthorized auth")
 			}
-			if authErr.StatusCode() != http.StatusServiceUnavailable {
-				t.Fatalf("status = %d, want %d", authErr.StatusCode(), http.StatusServiceUnavailable)
+			if authErr.StatusCode() != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d", authErr.StatusCode(), http.StatusForbidden)
 			}
 
 			// Negative case: adding a healthy credential allows selection to succeed.
