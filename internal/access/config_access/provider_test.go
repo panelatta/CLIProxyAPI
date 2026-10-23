@@ -11,8 +11,6 @@ import (
 )
 
 func TestRegisterUsesAPIKeysFromObjectYAML(t *testing.T) {
-	t.Parallel()
-
 	cfg, err := config.ParseConfigBytes([]byte("api-keys:\n  - api-key: sk-a\n    name: Alice laptop\n"))
 	if err != nil {
 		t.Fatalf("ParseConfigBytes: %v", err)

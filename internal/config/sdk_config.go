@@ -65,9 +65,8 @@ type SDKConfig struct {
 	// runtime shape.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 
-	// APIKeyEntries stores optional display metadata for APIKeys. It is populated
-	// from YAML object entries and management APIs, but it is not used for request
-	// authentication.
+	// APIKeyEntries stores display metadata and per-client policies for APIKeys,
+	// including the disabled state checked during request authentication.
 	APIKeyEntries []AccessAPIKeyEntry `yaml:"-" json:"api-key-entries,omitempty"`
 
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.

@@ -203,6 +203,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if !equalAccessAPIKeyEntryForceModels(oldCfg.APIKeyEntries, newCfg.APIKeyEntries) {
 		changes = append(changes, "api-keys: force-model policies updated")
 	}
+	if !equalAccessAPIKeyEntryDisabled(oldCfg.APIKeyEntries, newCfg.APIKeyEntries) {
+		changes = append(changes, "api-keys: disabled states updated")
+	}
 	if len(oldCfg.GeminiKey) != len(newCfg.GeminiKey) {
 		changes = append(changes, fmt.Sprintf("gemini-api-key count: %d -> %d", len(oldCfg.GeminiKey), len(newCfg.GeminiKey)))
 	} else {
@@ -573,6 +576,18 @@ func equalAccessAPIKeyEntryForceModels(a, b []config.AccessAPIKeyEntry) bool {
 	}
 	for i := range a {
 		if strings.TrimSpace(a[i].ForceModel) != strings.TrimSpace(b[i].ForceModel) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalAccessAPIKeyEntryDisabled(a, b []config.AccessAPIKeyEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Disabled != b[i].Disabled {
 			return false
 		}
 	}

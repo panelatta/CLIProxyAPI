@@ -84,6 +84,9 @@ management:
 # Client authentication for the proxy API. These are not upstream provider keys.
 access:
   # API keys for authentication
+  # Object entries support name, force-model, and disabled (default false).
+  # Set disabled: true to reject a key temporarily while retaining its settings.
+  # Example: {api-key: "client-key", name: "Laptop", disabled: true}
   api-keys:
     - "your-api-key-1"
     - "your-api-key-2"

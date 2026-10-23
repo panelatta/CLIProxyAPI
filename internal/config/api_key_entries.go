@@ -9,11 +9,13 @@ import (
 
 // AccessAPIKeyEntry stores a client API key plus optional per-client settings.
 // APIKey is used to authenticate requests, Name is UI metadata, and ForceModel
-// rewrites model-bearing requests after authentication.
+// rewrites model-bearing requests after authentication. Disabled keys are retained
+// in configuration but rejected during authentication.
 type AccessAPIKeyEntry struct {
 	APIKey     string `yaml:"api-key" json:"api-key"`
 	Name       string `yaml:"name,omitempty" json:"name,omitempty"`
 	ForceModel string `yaml:"force-model,omitempty" json:"force-model,omitempty"`
+	Disabled   bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 }
 
 func normalizeAccessAPIKeyEntry(entry AccessAPIKeyEntry) AccessAPIKeyEntry {
@@ -21,6 +23,7 @@ func normalizeAccessAPIKeyEntry(entry AccessAPIKeyEntry) AccessAPIKeyEntry {
 		APIKey:     strings.TrimSpace(entry.APIKey),
 		Name:       strings.TrimSpace(entry.Name),
 		ForceModel: strings.TrimSpace(entry.ForceModel),
+		Disabled:   entry.Disabled,
 	}
 }
 
@@ -53,11 +56,13 @@ func AccessAPIKeyEntriesForKeys(keys []string, existing []AccessAPIKeyEntry) []A
 
 	namesByKey := make(map[string]string, len(existing))
 	forceModelsByKey := make(map[string]string, len(existing))
+	disabledByKey := make(map[string]bool, len(existing))
 	for _, entry := range existing {
 		entry = normalizeAccessAPIKeyEntry(entry)
 		if entry.APIKey == "" {
 			continue
 		}
+		disabledByKey[entry.APIKey] = disabledByKey[entry.APIKey] || entry.Disabled
 		if entry.Name != "" {
 			if _, ok := namesByKey[entry.APIKey]; !ok {
 				namesByKey[entry.APIKey] = entry.Name
@@ -91,7 +96,7 @@ func AccessAPIKeyEntriesForKeys(keys []string, existing []AccessAPIKeyEntry) []A
 		if forceModel == "" {
 			forceModel = forceModelsByKey[key]
 		}
-		out = append(out, AccessAPIKeyEntry{APIKey: key, Name: name, ForceModel: forceModel})
+		out = append(out, AccessAPIKeyEntry{APIKey: key, Name: name, ForceModel: forceModel, Disabled: disabledByKey[key]})
 	}
 	return out
 }
@@ -157,7 +162,7 @@ func decodeConfigYAML(data []byte, cfg *Config) error {
 
 func accessAPIKeyEntriesNeedObjectYAML(entries []AccessAPIKeyEntry) bool {
 	for _, entry := range entries {
-		if strings.TrimSpace(entry.Name) != "" || strings.TrimSpace(entry.ForceModel) != "" {
+		if strings.TrimSpace(entry.Name) != "" || strings.TrimSpace(entry.ForceModel) != "" || entry.Disabled {
 			return true
 		}
 	}
@@ -194,6 +199,12 @@ func buildAPIKeysYAMLNode(keys []string, entries []AccessAPIKeyEntry) *yaml.Node
 			item.Content = append(item.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "force-model"},
 				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.ForceModel},
+			)
+		}
+		if entry.Disabled {
+			item.Content = append(item.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "disabled"},
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"},
 			)
 		}
 		node.Content = append(node.Content, item)

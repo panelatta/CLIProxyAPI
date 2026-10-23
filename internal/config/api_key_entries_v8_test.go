@@ -14,6 +14,7 @@ func TestNamedAccessKeysSurviveV8MigrationAndSave(t *testing.T) {
   - api-key: client-one
     name: Laptop
     force-model: pinned-model
+    disabled: true
   - client-two
 codex-api-key:
   - api-key: upstream-secret

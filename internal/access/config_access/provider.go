@@ -22,9 +22,17 @@ func Register(cfg *sdkconfig.SDKConfig) {
 		return
 	}
 
+	p := newProvider(sdkaccess.DefaultAccessProviderName, keys)
+	for _, entry := range cfg.APIKeyEntries {
+		if entry.Disabled {
+			delete(p.keys, strings.TrimSpace(entry.APIKey))
+		}
+	}
+	// Keep the provider registered when all configured keys are disabled so
+	// authentication cannot fall back to anonymous access.
 	sdkaccess.RegisterProvider(
 		sdkaccess.AccessProviderTypeConfigAPIKey,
-		newProvider(sdkaccess.DefaultAccessProviderName, keys),
+		p,
 	)
 }
 
@@ -54,9 +62,6 @@ func (p *provider) Identifier() string {
 
 func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.Result, *sdkaccess.AuthError) {
 	if p == nil {
-		return nil, sdkaccess.NewNotHandledError()
-	}
-	if len(p.keys) == 0 {
 		return nil, sdkaccess.NewNotHandledError()
 	}
 	authHeader := r.Header.Get("Authorization")
