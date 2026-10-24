@@ -16,14 +16,17 @@ type AccessAPIKeyEntry struct {
 	Name       string `yaml:"name,omitempty" json:"name,omitempty"`
 	ForceModel string `yaml:"force-model,omitempty" json:"force-model,omitempty"`
 	Disabled   bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	// AllowedProviders limits upstream channels. An empty list allows all channels.
+	AllowedProviders []string `yaml:"allowed-providers,omitempty" json:"allowed-providers,omitempty"`
 }
 
 func normalizeAccessAPIKeyEntry(entry AccessAPIKeyEntry) AccessAPIKeyEntry {
 	return AccessAPIKeyEntry{
-		APIKey:     strings.TrimSpace(entry.APIKey),
-		Name:       strings.TrimSpace(entry.Name),
-		ForceModel: strings.TrimSpace(entry.ForceModel),
-		Disabled:   entry.Disabled,
+		APIKey:           strings.TrimSpace(entry.APIKey),
+		Name:             strings.TrimSpace(entry.Name),
+		ForceModel:       strings.TrimSpace(entry.ForceModel),
+		Disabled:         entry.Disabled,
+		AllowedProviders: normalizeAllowedProviders(entry.AllowedProviders),
 	}
 }
 
@@ -57,10 +60,30 @@ func AccessAPIKeyEntriesForKeys(keys []string, existing []AccessAPIKeyEntry) []A
 	namesByKey := make(map[string]string, len(existing))
 	forceModelsByKey := make(map[string]string, len(existing))
 	disabledByKey := make(map[string]bool, len(existing))
+	providersByKey := make(map[string][]string, len(existing))
 	for _, entry := range existing {
 		entry = normalizeAccessAPIKeyEntry(entry)
 		if entry.APIKey == "" {
 			continue
+		}
+		if len(entry.AllowedProviders) > 0 {
+			if prior, exists := providersByKey[entry.APIKey]; exists {
+				intersection := []string{}
+				for _, provider := range prior {
+					for _, allowed := range entry.AllowedProviders {
+						if provider == allowed {
+							intersection = append(intersection, provider)
+							break
+						}
+					}
+				}
+				if len(intersection) == 0 {
+					intersection = []string{"__deny_all__"}
+				}
+				providersByKey[entry.APIKey] = intersection
+			} else {
+				providersByKey[entry.APIKey] = entry.AllowedProviders
+			}
 		}
 		disabledByKey[entry.APIKey] = disabledByKey[entry.APIKey] || entry.Disabled
 		if entry.Name != "" {
@@ -96,7 +119,7 @@ func AccessAPIKeyEntriesForKeys(keys []string, existing []AccessAPIKeyEntry) []A
 		if forceModel == "" {
 			forceModel = forceModelsByKey[key]
 		}
-		out = append(out, AccessAPIKeyEntry{APIKey: key, Name: name, ForceModel: forceModel, Disabled: disabledByKey[key]})
+		out = append(out, AccessAPIKeyEntry{APIKey: key, Name: name, ForceModel: forceModel, Disabled: disabledByKey[key], AllowedProviders: append([]string(nil), providersByKey[key]...)})
 	}
 	return out
 }
@@ -162,7 +185,7 @@ func decodeConfigYAML(data []byte, cfg *Config) error {
 
 func accessAPIKeyEntriesNeedObjectYAML(entries []AccessAPIKeyEntry) bool {
 	for _, entry := range entries {
-		if strings.TrimSpace(entry.Name) != "" || strings.TrimSpace(entry.ForceModel) != "" || entry.Disabled {
+		if strings.TrimSpace(entry.Name) != "" || strings.TrimSpace(entry.ForceModel) != "" || entry.Disabled || len(entry.AllowedProviders) > 0 {
 			return true
 		}
 	}
@@ -200,6 +223,13 @@ func buildAPIKeysYAMLNode(keys []string, entries []AccessAPIKeyEntry) *yaml.Node
 				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "force-model"},
 				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.ForceModel},
 			)
+		}
+		if len(entry.AllowedProviders) > 0 {
+			allowed := &yaml.Node{Kind: yaml.SequenceNode}
+			for _, provider := range entry.AllowedProviders {
+				allowed.Content = append(allowed.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: provider})
+			}
+			item.Content = append(item.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "allowed-providers"}, allowed)
 		}
 		if entry.Disabled {
 			item.Content = append(item.Content,
@@ -261,4 +291,21 @@ func (cfg *Config) NormalizeAccessAPIKeyEntries() {
 		return
 	}
 	cfg.APIKeyEntries = AccessAPIKeyEntriesForKeys(cfg.APIKeys, cfg.APIKeyEntries)
+}
+
+func normalizeAllowedProviders(providers []string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, provider := range providers {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		// Preserve invalid/blank restrictions as deny-only entries, never broaden access.
+		if provider == "" {
+			provider = "__deny_all__"
+		}
+		if !seen[provider] {
+			out = append(out, provider)
+			seen[provider] = true
+		}
+	}
+	return out
 }

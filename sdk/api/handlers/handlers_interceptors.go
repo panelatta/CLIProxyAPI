@@ -682,6 +682,12 @@ func (h *BaseAPIHandler) WriteModelListResponse(c *gin.Context, sourceFormat str
 		lifecycle.complete(pluginapi.RequestCompletionSucceeded, http.StatusOK, nil)
 	}
 
+	var errPolicy error
+	body, errPolicy = h.filterAccessModelList(c, body)
+	if errPolicy != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to filter model catalog"})
+		return
+	}
 	if c.Writer.Header().Get("Content-Type") == "" {
 		c.Header("Content-Type", "application/json; charset=utf-8")
 	}

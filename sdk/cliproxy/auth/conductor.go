@@ -266,6 +266,9 @@ func (m *Manager) ResponsesHTTPRequest(ctx context.Context, auth *Auth, response
 	if providerKey == "" {
 		return nil, &Error{Code: "provider_not_found", Message: "auth provider is empty"}
 	}
+	if _, errPolicy := m.AccessPolicy(ctx).Filter([]string{providerKey}); errPolicy != nil {
+		return nil, errPolicy
+	}
 	exec := m.executorFor(providerKey)
 	if exec == nil {
 		return nil, &Error{Code: "provider_not_found", Message: "executor not registered for provider: " + providerKey}

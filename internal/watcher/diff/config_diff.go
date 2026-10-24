@@ -206,6 +206,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if !equalAccessAPIKeyEntryDisabled(oldCfg.APIKeyEntries, newCfg.APIKeyEntries) {
 		changes = append(changes, "api-keys: disabled states updated")
 	}
+	if !equalAccessAPIKeyEntryProviders(oldCfg.APIKeyEntries, newCfg.APIKeyEntries) {
+		changes = append(changes, "api-keys: allowed product channels updated")
+	}
 	if len(oldCfg.GeminiKey) != len(newCfg.GeminiKey) {
 		changes = append(changes, fmt.Sprintf("gemini-api-key count: %d -> %d", len(oldCfg.GeminiKey), len(newCfg.GeminiKey)))
 	} else {
@@ -715,4 +718,16 @@ func formatURL(raw string) string {
 		return host
 	}
 	return scheme + "://" + host
+}
+
+func equalAccessAPIKeyEntryProviders(a, b []config.AccessAPIKeyEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !reflect.DeepEqual(a[i].AllowedProviders, b[i].AllowedProviders) {
+			return false
+		}
+	}
+	return true
 }

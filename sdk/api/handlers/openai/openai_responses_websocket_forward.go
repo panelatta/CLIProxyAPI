@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/accesspolicy"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
@@ -262,6 +263,10 @@ func responsesWebsocketErrorStatus(errMsg *interfaces.ErrorMessage) int {
 func shouldExposeResponsesUpstreamError(errMsg *interfaces.ErrorMessage) bool {
 	if errMsg == nil {
 		return false
+	}
+	var denied accesspolicy.DeniedError
+	if errors.As(errMsg.Error, &denied) {
+		return true
 	}
 	if coreauth.IsTerminalAuthError(errMsg.Error) {
 		return true

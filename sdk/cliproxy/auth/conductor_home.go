@@ -972,6 +972,10 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 		return nil, errRetained
 	}
 	if retainedOK {
+		if _, errPolicy := m.AccessPolicy(ctx).Filter([]string{retained.Provider}); errPolicy != nil {
+			retained.End("product_not_allowed")
+			return nil, errPolicy
+		}
 		return retained, nil
 	}
 	if sessionID := homeExecutionSessionIDFromMetadata(opts.Metadata); sessionID != "" {
@@ -1230,6 +1234,10 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 	}
 	selection.CanonicalSessionID = sessionID
 	selection.ParentSessionID = parentSessionID
+	if _, errPolicy := m.AccessPolicy(ctx).Filter([]string{selection.Provider}); errPolicy != nil {
+		selection.End("product_not_allowed")
+		return nil, errPolicy
+	}
 	return selection, nil
 }
 

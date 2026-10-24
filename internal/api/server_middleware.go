@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/accesspolicy"
 	codexlive "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/live"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
@@ -167,6 +168,9 @@ func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.Ha
 		if err == nil {
 			if result != nil {
 				c.Set("userApiKey", result.Principal)
+				c.Set("accessClientApiKey", result.Principal)
+				c.Set("accessProductsRestricted", result.Metadata["product-policy"] == "restricted")
+				c.Request = c.Request.WithContext(accesspolicy.WithPrincipal(c.Request.Context(), result.Principal, result.Metadata["product-policy"] == "restricted"))
 				c.Set("accessProvider", result.Provider)
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
@@ -176,6 +180,10 @@ func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.Ha
 			return
 		}
 
+		if err.Code == "product_not_allowed" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": gin.H{"message": err.Message, "type": "permission_error", "code": "product_not_allowed"}})
+			return
+		}
 		statusCode := err.HTTPStatusCode()
 		if statusCode >= http.StatusInternalServerError {
 			log.Errorf("authentication middleware error: %v", err)
@@ -225,6 +233,8 @@ func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handl
 			provider = "realtime-client-secret"
 		}
 		c.Set("userApiKey", principal)
+		c.Set("accessClientApiKey", principal)
+		c.Request = c.Request.WithContext(accesspolicy.WithPrincipal(c.Request.Context(), principal, false))
 		c.Set("accessProvider", provider)
 		c.Set(codexlive.ClientSecretSessionContextKey, authorization.Session)
 		c.Set(codexlive.ClientSecretPrincipalContextKey, authorization.Principal)

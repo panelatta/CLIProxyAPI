@@ -123,6 +123,11 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 	ctx = cliproxyexecutor.WithRequestProxyURL(ctx, opts.ProxyURL)
 	req, opts = cliproxysession.Enrich(req, opts)
 	normalized := m.normalizeProviders(providers)
+	var errPolicy error
+	normalized, errPolicy = m.AccessPolicy(ctx).Filter(normalized)
+	if errPolicy != nil {
+		return cliproxyexecutor.Response{}, errPolicy
+	}
 	if len(normalized) == 0 {
 		return cliproxyexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
@@ -183,6 +188,11 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 	ctx = cliproxyexecutor.WithRequestProxyURL(ctx, opts.ProxyURL)
 	req, opts = cliproxysession.Enrich(req, opts)
 	normalized := m.normalizeProviders(providers)
+	var errPolicy error
+	normalized, errPolicy = m.AccessPolicy(ctx).Filter(normalized)
+	if errPolicy != nil {
+		return cliproxyexecutor.Response{}, errPolicy
+	}
 	if len(normalized) == 0 {
 		return cliproxyexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
@@ -241,6 +251,11 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 		}
 	}
 	normalized := m.normalizeProviders(providers)
+	var errPolicy error
+	normalized, errPolicy = m.AccessPolicy(ctx).Filter(normalized)
+	if errPolicy != nil {
+		return nil, errPolicy
+	}
 	if len(normalized) == 0 {
 		return nil, &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
@@ -2012,6 +2027,9 @@ func (m *Manager) PrepareHttpRequest(ctx context.Context, auth *Auth, req *http.
 	if providerKey == "" {
 		return &Error{Code: "provider_not_found", Message: "auth provider is empty"}
 	}
+	if _, errPolicy := m.AccessPolicy(ctx).Filter([]string{providerKey}); errPolicy != nil {
+		return errPolicy
+	}
 	exec := m.executorFor(providerKey)
 	if exec == nil {
 		return &Error{Code: "provider_not_found", Message: "executor not registered for provider: " + providerKey}
@@ -2063,6 +2081,9 @@ func (m *Manager) HttpRequest(ctx context.Context, auth *Auth, req *http.Request
 	providerKey := executorKeyFromAuth(auth)
 	if providerKey == "" {
 		return nil, &Error{Code: "provider_not_found", Message: "auth provider is empty"}
+	}
+	if _, errPolicy := m.AccessPolicy(ctx).Filter([]string{providerKey}); errPolicy != nil {
+		return nil, errPolicy
 	}
 	exec := m.executorFor(providerKey)
 	if exec == nil {

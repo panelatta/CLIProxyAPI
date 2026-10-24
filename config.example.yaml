@@ -83,8 +83,18 @@ management:
 
 # Client authentication for the proxy API. These are not upstream provider keys.
 access:
+  # Client keys may use object entries to restrict upstream product channels:
+  # api-keys:
+  #   - api-key: "your-claude-only-client-key"
+  #     name: "Claude only"
+  #     allowed-providers: [claude]
+  # Omit allowed-providers (or use []) to allow all channels. Multiple entries
+  # form an allowlist, e.g. [claude, codex, gemini]. Restrictions use the actual
+  # routed channel, including aliases, streams and WebSocket requests.
+  # openai-compatibility permits all named OpenAI-compatible upstream groups.
+  # Restricted keys cannot use plugin executor/unknown extension routes.
   # API keys for authentication
-  # Object entries support name, force-model, and disabled (default false).
+  # Object entries support name, force-model, allowed-providers, and disabled (default false).
   # Set disabled: true to reject a key temporarily while retaining its settings.
   # Example: {api-key: "client-key", name: "Laptop", disabled: true}
   api-keys:

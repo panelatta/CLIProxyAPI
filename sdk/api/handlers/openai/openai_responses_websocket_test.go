@@ -7854,3 +7854,43 @@ func TestForwardResponsesWebsocketPingWriteFailureAbortsSession(t *testing.T) {
 		t.Fatal("timed out awaiting cancel callback on ping write failure")
 	}
 }
+
+func TestResponsesWebsocketAccessProductsDenied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const model = "access-products-codex-alias"
+	cfg := &internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
+		APIKeys:       []string{"client"},
+		APIKeyEntries: []internalconfig.AccessAPIKeyEntry{{APIKey: "client", AllowedProviders: []string{"claude"}}},
+	}}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.SetConfig(cfg)
+	registry.GetGlobalRegistry().RegisterClient("access-products-ws", "codex", []*registry.ModelInfo{{ID: model}})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient("access-products-ws") })
+	handler := NewOpenAIResponsesAPIHandler(handlers.NewBaseAPIHandlers(&cfg.SDKConfig, manager))
+	router := gin.New()
+	router.GET("/v1/responses", func(c *gin.Context) {
+		c.Set("userApiKey", "client")
+		c.Set("accessProductsRestricted", true)
+		handler.ResponsesWebsocket(c)
+	})
+	server := httptest.NewServer(router)
+	defer server.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err = conn.WriteJSON(map[string]any{"type": "response.create", "model": model, "input": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gjson.GetBytes(payload, "status").Int() != 403 || gjson.GetBytes(payload, "error.code").String() != "product_not_allowed" {
+		t.Fatalf("expected explicit product permission error, got %s", payload)
+	}
+}

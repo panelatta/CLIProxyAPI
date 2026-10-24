@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestConfigV8AccessKeyDisabledRoundTrip(t *testing.T) {
 		}
 		select {
 		case next := <-reloads:
-			if len(next.APIKeys) != 1 || len(next.APIKeyEntries) != 1 || next.APIKeyEntries[0] != entries[0] {
+			if len(next.APIKeys) != 1 || len(next.APIKeyEntries) != 1 || !reflect.DeepEqual(next.APIKeyEntries[0], entries[0]) {
 				t.Fatal("runtime reload lost the key or its settings")
 			}
 		case <-time.After(5 * time.Second):
@@ -53,7 +54,7 @@ func TestConfigV8AccessKeyDisabledRoundTrip(t *testing.T) {
 		recorder = httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v8/management/config/access/api-keys", nil))
 		var saved []config.AccessAPIKeyEntry
-		if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &saved) != nil || len(saved) != 1 || saved[0] != entries[0] {
+		if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &saved) != nil || len(saved) != 1 || !reflect.DeepEqual(saved[0], entries[0]) {
 			t.Fatalf("GET lost key settings: status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
 	}

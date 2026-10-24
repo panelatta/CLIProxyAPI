@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/accesspolicy"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
@@ -23,6 +24,10 @@ func Register(cfg *sdkconfig.SDKConfig) {
 	}
 
 	p := newProvider(sdkaccess.DefaultAccessProviderName, keys)
+	p.policies = make(map[string]accesspolicy.Policy, len(keys))
+	for _, key := range keys {
+		p.policies[key] = accesspolicy.ForKey(cfg, key)
+	}
 	for _, entry := range cfg.APIKeyEntries {
 		if entry.Disabled {
 			delete(p.keys, strings.TrimSpace(entry.APIKey))
@@ -37,8 +42,9 @@ func Register(cfg *sdkconfig.SDKConfig) {
 }
 
 type provider struct {
-	name string
-	keys map[string]struct{}
+	name     string
+	keys     map[string]struct{}
+	policies map[string]accesspolicy.Policy
 }
 
 func newProvider(name string, keys []string) *provider {
@@ -95,12 +101,17 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 			continue
 		}
 		if _, ok := p.keys[candidate.value]; ok {
+			if r.URL != nil && !p.policies[candidate.value].AllowsEndpoint(r.URL.Path) {
+				return nil, &sdkaccess.AuthError{Code: "product_not_allowed", Message: "This API key is not allowed to access the requested product channel", StatusCode: http.StatusForbidden}
+			}
+			metadata := map[string]string{"source": candidate.source}
+			if p.policies[candidate.value].Restricted() {
+				metadata["product-policy"] = "restricted"
+			}
 			return &sdkaccess.Result{
 				Provider:  p.Identifier(),
 				Principal: candidate.value,
-				Metadata: map[string]string{
-					"source": candidate.source,
-				},
+				Metadata:  metadata,
 			}, nil
 		}
 	}
