@@ -5,10 +5,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
-	"github.com/tidwall/gjson"
 )
 
 func TestOpenAIModelsPreservesExtendedMetadata(t *testing.T) {
@@ -45,19 +45,19 @@ func TestOpenAIModelsPreservesExtendedMetadata(t *testing.T) {
 	}
 
 	body := recorder.Body.String()
-	if got := gjson.Get(body, "data.#(id==\"test-model\").display_name").String(); got != "Test Model" {
+	if got := ojson.Get(body, "data.#(id==\"test-model\").display_name").String(); got != "Test Model" {
 		t.Fatalf("display_name = %q, want %q; body=%s", got, "Test Model", body)
 	}
-	if got := gjson.Get(body, "data.#(id==\"test-model\").name").String(); got != "Test Model" {
+	if got := ojson.Get(body, "data.#(id==\"test-model\").name").String(); got != "Test Model" {
 		t.Fatalf("name = %q, want %q; body=%s", got, "Test Model", body)
 	}
-	if got := gjson.Get(body, "data.#(id==\"test-model\").supported_parameters.0").String(); got != "tools" {
+	if got := ojson.Get(body, "data.#(id==\"test-model\").supported_parameters.0").String(); got != "tools" {
 		t.Fatalf("supported_parameters[0] = %q, want %q; body=%s", got, "tools", body)
 	}
-	if got := gjson.Get(body, "data.#(id==\"test-model\").thinking.levels.1").String(); got != "high" {
+	if got := ojson.Get(body, "data.#(id==\"test-model\").thinking.levels.1").String(); got != "high" {
 		t.Fatalf("thinking.levels[1] = %q, want %q; body=%s", got, "high", body)
 	}
-	if got := gjson.Get(body, "data.#(id==\"test-model\").info.meta.capabilities.builtin_tools").Bool(); !got {
+	if got := ojson.Get(body, "data.#(id==\"test-model\").info.meta.capabilities.builtin_tools").Bool(); !got {
 		t.Fatalf("info.meta.capabilities.builtin_tools = %v, want true; body=%s", got, body)
 	}
 }

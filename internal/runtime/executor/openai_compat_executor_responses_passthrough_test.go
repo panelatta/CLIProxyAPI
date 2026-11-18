@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestOpenAICompatResponsesPassthroughDisabledUsesChatCompletions(t *testing.T) {
@@ -73,11 +73,11 @@ func TestOpenAICompatResponsesPassthroughExecutePostsResponses(t *testing.T) {
 	if gotAuth != "Bearer test-key" {
 		t.Fatalf("Authorization = %q, want Bearer test-key", gotAuth)
 	}
-	if got := gjson.GetBytes(gotBody, "model").String(); got != "gpt-5.5" {
+	if got := ojson.GetBytes(gotBody, "model").String(); got != "gpt-5.5" {
 		t.Fatalf("body model = %q, want gpt-5.5; body=%s", got, gotBody)
 	}
 	for _, key := range []string{"background", "stream", "store"} {
-		if !gjson.GetBytes(gotBody, key).Bool() {
+		if !ojson.GetBytes(gotBody, key).Bool() {
 			t.Fatalf("body %s should be true: %s", key, gotBody)
 		}
 	}

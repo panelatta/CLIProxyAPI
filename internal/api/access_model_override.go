@@ -7,10 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	codexlive "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/live"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 const forcedModelContextKey = "forcedModel"
@@ -54,20 +53,21 @@ func (s *Server) accessModelOverrideMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if !gjson.ValidBytes(body) || !gjson.GetBytes(body, "model").Exists() {
+		if !ojson.ValidBytes(body) || !ojson.GetBytes(body, "model").Exists() {
 			resetRequestBody(c.Request, body)
 			c.Next()
 			return
 		}
 
-		updated, errSet := sjson.SetBytes(body, "model", forcedModel)
+		doc := ojson.NewDoc(body)
+		errSet := doc.Set("model", forcedModel)
 		if errSet != nil {
 			resetRequestBody(c.Request, body)
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "failed to apply forced model"})
 			return
 		}
 
-		resetRequestBody(c.Request, updated)
+		resetRequestBody(c.Request, doc.Bytes())
 		c.Set(forcedModelContextKey, forcedModel)
 		c.Next()
 	}

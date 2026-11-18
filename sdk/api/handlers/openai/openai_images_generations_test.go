@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"github.com/tidwall/gjson"
 )
 
 type imageGenerationCaptureExecutor struct {
@@ -87,7 +87,7 @@ func TestOpenAIImageGenerationsExecute(t *testing.T) {
 	if executor.sourceFormat != "openai" {
 		t.Fatalf("source format = %q, want %q", executor.sourceFormat, "openai")
 	}
-	if got := gjson.Get(executor.payload, "prompt").String(); got != "draw a CLI proxy" {
+	if got := ojson.Get(executor.payload, "prompt").String(); got != "draw a CLI proxy" {
 		t.Fatalf("prompt = %q", got)
 	}
 	if got := strings.TrimSpace(resp.Body.String()); got != `{"created":1,"data":[{"b64_json":"aW1hZ2U="}]}` {

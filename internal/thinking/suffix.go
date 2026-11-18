@@ -66,6 +66,12 @@ func parseDelimitedSuffix(model string) (SuffixResult, bool) {
 	}, true
 }
 
+// HasThinkingSuffix reports whether the model suffix defines a thinking configuration.
+func HasThinkingSuffix(model string) bool {
+	result := ParseSuffix(model)
+	return result.HasSuffix && hasThinkingConfig(parseSuffixToConfig(result.RawSuffix, "", result.ModelName))
+}
+
 // ParseNumericSuffix attempts to parse a raw suffix as a numeric budget value.
 //
 // This function parses the raw suffix content (from ParseSuffix.RawSuffix) as an integer.

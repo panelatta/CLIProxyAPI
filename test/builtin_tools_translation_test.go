@@ -5,8 +5,8 @@ import (
 
 	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/translator"
 
+	"github.com/MoeForge/moego/ojson"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestOpenAIToCodex_PreservesBuiltinTools(t *testing.T) {
@@ -19,19 +19,19 @@ func TestOpenAIToCodex_PreservesBuiltinTools(t *testing.T) {
 
 	out := sdktranslator.TranslateRequest(sdktranslator.FormatOpenAI, sdktranslator.FormatCodex, "gpt-5", in, false)
 
-	if got := gjson.GetBytes(out, "tools.#").Int(); got != 1 {
+	if got := ojson.GetBytesNoCopy(out, "tools.#").Int(); got != 1 {
 		t.Fatalf("expected 1 tool, got %d: %s", got, string(out))
 	}
-	if got := gjson.GetBytes(out, "tools.0.type").String(); got != "web_search" {
+	if got := ojson.GetBytesNoCopy(out, "tools.0.type").String(); got != "web_search" {
 		t.Fatalf("expected tools[0].type=web_search, got %q: %s", got, string(out))
 	}
-	if got := gjson.GetBytes(out, "tools.0.search_context_size").String(); got != "high" {
+	if got := ojson.GetBytesNoCopy(out, "tools.0.search_context_size").String(); got != "high" {
 		t.Fatalf("expected tools[0].search_context_size=high, got %q: %s", got, string(out))
 	}
-	if got := gjson.GetBytes(out, "tool_choice.type").String(); got != "web_search" {
+	if got := ojson.GetBytesNoCopy(out, "tool_choice.type").String(); got != "web_search" {
 		t.Fatalf("expected tool_choice.type=web_search, got %q: %s", got, string(out))
 	}
-	if got := gjson.GetBytes(out, `include.#(=="web_search_call.action.sources")`).String(); got != "web_search_call.action.sources" {
+	if got := ojson.GetBytes(out, `include.#(=="web_search_call.action.sources")`).String(); got != "web_search_call.action.sources" {
 		t.Fatalf("expected web search sources include, got %q: %s", got, string(out))
 	}
 }
@@ -46,10 +46,10 @@ func TestOpenAIResponsesToCodex_AddsWebSearchSourcesInclude(t *testing.T) {
 
 	out := sdktranslator.TranslateRequest(sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex, "gpt-5", in, false)
 
-	if got := gjson.GetBytes(out, `include.#(=="reasoning.encrypted_content")`).String(); got != "reasoning.encrypted_content" {
+	if got := ojson.GetBytes(out, `include.#(=="reasoning.encrypted_content")`).String(); got != "reasoning.encrypted_content" {
 		t.Fatalf("expected reasoning include, got %q: %s", got, string(out))
 	}
-	if got := gjson.GetBytes(out, `include.#(=="web_search_call.action.sources")`).String(); got != "web_search_call.action.sources" {
+	if got := ojson.GetBytes(out, `include.#(=="web_search_call.action.sources")`).String(); got != "web_search_call.action.sources" {
 		t.Fatalf("expected web search sources include, got %q: %s", got, string(out))
 	}
 }
@@ -63,7 +63,7 @@ func TestOpenAIResponsesToOpenAI_IgnoresBuiltinTools(t *testing.T) {
 
 	out := sdktranslator.TranslateRequest(sdktranslator.FormatOpenAIResponse, sdktranslator.FormatOpenAI, "gpt-5", in, false)
 
-	if got := gjson.GetBytes(out, "tools.#").Int(); got != 0 {
+	if got := ojson.GetBytesNoCopy(out, "tools.#").Int(); got != 0 {
 		t.Fatalf("expected 0 tools (builtin tools not supported in Chat Completions), got %d: %s", got, string(out))
 	}
 }

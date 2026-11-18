@@ -5,34 +5,37 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // StripAbliterationSearchCacheControl removes a field rejected by this model's
-// server-side search tool. Run after cache injection and payload overrides so
-// both generated and caller-supplied markers are covered. Other tools and the
+// server-side search tool. Run after cache injection and before final payload rules.
+// Both generated and caller-supplied markers are covered. Other tools and the
 // system/message cache breakpoints remain unchanged.
 func StripAbliterationSearchCacheControl(payload []byte, upstreamURL string) []byte {
-	if gjson.GetBytes(payload, "model").String() != "abliterated-model-large-v2" {
-		return payload
+	doc := ojson.NewDoc(payload)
+	StripAbliterationSearchCacheControlDoc(doc, upstreamURL)
+	return doc.Bytes()
+}
+
+func StripAbliterationSearchCacheControlDoc(doc *ojson.Doc, upstreamURL string) {
+	if doc.Get("model").String() != "abliterated-model-large-v2" {
+		return
 	}
 	endpoint, err := url.Parse(upstreamURL)
 	if err != nil || !strings.EqualFold(endpoint.Hostname(), "api.abliteration.ai") {
-		return payload
+		return
 	}
-	tools := gjson.GetBytes(payload, "tools")
+	tools := doc.Get("tools")
 	if !tools.IsArray() {
-		return payload
+		return
 	}
-	tools.ForEach(func(index, tool gjson.Result) bool {
+	tools.ForEach(func(index, tool ojson.Result) bool {
 		toolType := tool.Get("type").String()
 		if (toolType == "web_search" || strings.HasPrefix(toolType, "web_search_")) && tool.Get("cache_control").Exists() {
-			if updated, errDelete := sjson.DeleteBytes(payload, fmt.Sprintf("tools.%d.cache_control", index.Int())); errDelete == nil {
-				payload = updated
-			}
+			_ = doc.Delete(fmt.Sprintf("tools.%d.cache_control", index.Int()))
 		}
 		return true
 	})
-	return payload
+	return
 }

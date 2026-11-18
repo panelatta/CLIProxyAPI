@@ -1,12 +1,16 @@
 package registry
 
 import (
-	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/MoeForge/moego/json"
 )
 
 func TestCodexConfigurationUpdateCapability(t *testing.T) {
+	// Counterexample: present in every tier without support_configuration_update.
+	const incapableModelID = "gpt-5.6-luna"
 	for _, tier := range []struct {
 		name    string
 		models  func() []*ModelInfo
@@ -24,13 +28,13 @@ func TestCodexConfigurationUpdateCapability(t *testing.T) {
 					byID[info.ID] = info
 				}
 			}
-			for _, id := range append([]string{"gpt-5.5"}, tier.capable...) {
+			for _, id := range append([]string{incapableModelID}, tier.capable...) {
 				info := byID[id]
 				if info == nil {
 					t.Errorf("%s is missing", id)
 					continue
 				}
-				want := id != "gpt-5.5"
+				want := id != incapableModelID
 				if info.SupportConfigurationUpdate != want {
 					t.Errorf("%s configuration_update = %v, want %v", id, info.SupportConfigurationUpdate, want)
 				}
@@ -69,37 +73,37 @@ func TestCodexConfigurationUpdateCapability(t *testing.T) {
 	}
 }
 
-func TestCodexFreeModelsIncludeGPT55(t *testing.T) {
-	model := findModelInfo(GetCodexFreeModels(), "gpt-5.5")
-	if model == nil {
-		t.Fatal("expected codex free tier to include gpt-5.5")
+func TestCodexFreeModelsDoNotAdvertisePaidGPT62(t *testing.T) {
+	models := GetCodexFreeModels()
+	if findModelInfo(models, "gpt-6.1-terra") == nil {
+		t.Fatal("expected the current free-tier model")
 	}
-	assertGPT55ModelInfo(t, "free", model)
+	for _, id := range []string{"gpt-6.2-astra", "gpt-6.2-sol"} {
+		if findModelInfo(models, id) != nil {
+			t.Fatalf("free tier unexpectedly advertises %s", id)
+		}
+	}
 }
 
-func TestCodexStaticModelsIncludeGPT55(t *testing.T) {
-	tierModels := map[string][]*ModelInfo{
-		"free": GetCodexFreeModels(),
-		"team": GetCodexTeamModels(),
-		"plus": GetCodexPlusModels(),
-		"pro":  GetCodexProModels(),
-	}
-
-	for tier, models := range tierModels {
+func TestCodexStaticModelsIncludeGPT62(t *testing.T) {
+	for tier, models := range map[string][]*ModelInfo{"team": GetCodexTeamModels(), "plus": GetCodexPlusModels(), "pro": GetCodexProModels()} {
 		t.Run(tier, func(t *testing.T) {
-			model := findModelInfo(models, "gpt-5.5")
-			if model == nil {
-				t.Fatalf("expected codex %s tier to include gpt-5.5", tier)
+			for _, id := range []string{"gpt-6.2-astra", "gpt-6.2-sol"} {
+				model := findModelInfo(models, id)
+				if model == nil {
+					t.Fatalf("expected codex %s tier to include %s", tier, id)
+				}
+				assertGPT62ModelInfo(t, model)
 			}
-			assertGPT55ModelInfo(t, tier, model)
 		})
 	}
-
-	model := LookupStaticModelInfo("gpt-5.5")
-	if model == nil {
-		t.Fatal("expected LookupStaticModelInfo to find gpt-5.5")
+	for _, id := range []string{"gpt-6.2-astra", "gpt-6.2-sol"} {
+		model := LookupStaticModelInfo(id)
+		if model == nil {
+			t.Fatalf("static lookup did not find %s", id)
+		}
+		assertGPT62ModelInfo(t, model)
 	}
-	assertGPT55ModelInfo(t, "lookup", model)
 }
 
 func findModelInfo(models []*ModelInfo, id string) *ModelInfo {
@@ -111,54 +115,23 @@ func findModelInfo(models []*ModelInfo, id string) *ModelInfo {
 	return nil
 }
 
-func assertGPT55ModelInfo(t *testing.T, source string, model *ModelInfo) {
+func assertGPT62ModelInfo(t *testing.T, model *ModelInfo) {
 	t.Helper()
-
-	if model.ID != "gpt-5.5" {
-		t.Fatalf("%s id mismatch: got %q", source, model.ID)
+	if model.Object != "model" || model.OwnedBy != "openai" || model.Type != "openai" || model.Version != "gpt-6.2" {
+		t.Fatalf("invalid GPT-6.2 model metadata: %+v", model)
 	}
-	if model.Object != "model" {
-		t.Fatalf("%s object mismatch: got %q", source, model.Object)
+	wantName, wantContext := "GPT 6.2 Astra", 272000
+	if model.ID == "gpt-6.2-sol" {
+		wantName, wantContext = "GPT 6.2 Sol", 500000
 	}
-	if model.Created != 1776902400 {
-		t.Fatalf("%s created timestamp mismatch: got %d", source, model.Created)
+	if model.DisplayName != wantName || model.ContextLength != wantContext || model.MaxCompletionTokens != 128000 {
+		t.Fatalf("unexpected limits or display name for %s: %+v", model.ID, model)
 	}
-	if model.OwnedBy != "openai" {
-		t.Fatalf("%s owned_by mismatch: got %q", source, model.OwnedBy)
+	if strings.TrimSpace(model.Description) == "" || !model.SupportConfigurationUpdate {
+		t.Fatalf("missing GPT-6.2 capabilities for %s", model.ID)
 	}
-	if model.Type != "openai" {
-		t.Fatalf("%s type mismatch: got %q", source, model.Type)
-	}
-	if model.DisplayName != "GPT 5.5" {
-		t.Fatalf("%s display name mismatch: got %q", source, model.DisplayName)
-	}
-	if model.Version != "gpt-5.5" {
-		t.Fatalf("%s version mismatch: got %q", source, model.Version)
-	}
-	if model.Description != "Frontier model for complex coding, research, and real-world work." {
-		t.Fatalf("%s description mismatch: got %q", source, model.Description)
-	}
-	if model.ContextLength != 272000 {
-		t.Fatalf("%s context length mismatch: got %d", source, model.ContextLength)
-	}
-	if model.MaxCompletionTokens != 128000 {
-		t.Fatalf("%s max completion tokens mismatch: got %d", source, model.MaxCompletionTokens)
-	}
-	if len(model.SupportedParameters) != 1 || model.SupportedParameters[0] != "tools" {
-		t.Fatalf("%s supported parameters mismatch: got %v", source, model.SupportedParameters)
-	}
-	if model.Thinking == nil {
-		t.Fatalf("%s missing thinking support", source)
-	}
-
-	want := []string{"low", "medium", "high", "xhigh"}
-	if len(model.Thinking.Levels) != len(want) {
-		t.Fatalf("%s thinking level count mismatch: got %d, want %d", source, len(model.Thinking.Levels), len(want))
-	}
-	for i, level := range want {
-		if model.Thinking.Levels[i] != level {
-			t.Fatalf("%s thinking level %d mismatch: got %q, want %q", source, i, model.Thinking.Levels[i], level)
-		}
+	if model.Thinking == nil || !reflect.DeepEqual(model.Thinking.Levels, []string{"low", "medium", "high", "xhigh", "max"}) {
+		t.Fatalf("invalid GPT-6.2 reasoning levels for %s: %+v", model.ID, model.Thinking)
 	}
 }
 
@@ -224,6 +197,28 @@ func TestWithXAIBuiltinsIncludesImage20(t *testing.T) {
 	t.Fatalf("expected xAI builtin model %s", xaiBuiltinImage20ModelID)
 }
 
+func TestWithXAIBuiltinsIncludesSpeechModels(t *testing.T) {
+	models := WithXAIBuiltins(nil)
+	found := map[string]*ModelInfo{}
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		if model.ID == xaiBuiltinSpeechModelID || model.ID == xaiBuiltinSpeechVoiceModelID {
+			found[model.ID] = model
+		}
+	}
+	for _, id := range []string{xaiBuiltinSpeechModelID, xaiBuiltinSpeechVoiceModelID} {
+		model := found[id]
+		if model == nil {
+			t.Fatalf("expected xAI builtin model %s", id)
+		}
+		if model.OwnedBy != "xai" || model.Type != "xai" {
+			t.Fatalf("%s owned_by/type = %s/%s, want xai/xai", id, model.OwnedBy, model.Type)
+		}
+	}
+}
+
 func TestWithXAIBuiltinsIncludesVideo15GAAndPreviewAlias(t *testing.T) {
 	models := WithXAIBuiltins(nil)
 	foundGA := false
@@ -246,6 +241,94 @@ func TestWithXAIBuiltinsIncludesVideo15GAAndPreviewAlias(t *testing.T) {
 	}
 	if !foundPreviewAlias {
 		t.Fatalf("expected xAI builtin compatibility alias %s", xaiBuiltinVideo15PreviewID)
+	}
+}
+
+func TestGetXAIModelsPreservesVideo15LiteAfterCatalogRefresh(t *testing.T) {
+	const liteID = "grok-imagine-video-1.5-lite"
+	original := getModels()
+	t.Cleanup(func() {
+		modelsCatalogStore.mu.Lock()
+		modelsCatalogStore.data = original
+		modelsCatalogStore.mu.Unlock()
+	})
+
+	refreshed := *original
+	remoteModel := &ModelInfo{ID: "refreshed-xai-model", OwnedBy: "xai", Type: "xai", DisplayName: "Refreshed model"}
+	refreshed.XAI = []*ModelInfo{remoteModel}
+	payload, err := json.Marshal(&refreshed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publishCatalogBytes(payload); err != nil {
+		t.Fatalf("publish catalog without Lite: %v", err)
+	}
+
+	models := GetXAIModels()
+	foundLite, foundRemote := false, false
+	for _, model := range models {
+		if model.ID == liteID {
+			foundLite = true
+			if model.OwnedBy != "xai" || model.Type != "xai" ||
+				!reflect.DeepEqual(model.SupportedInputModalities, []string{"text", "image"}) ||
+				!reflect.DeepEqual(model.SupportedOutputModalities, []string{"video"}) {
+				t.Fatalf("Lite lost xAI video capabilities after catalog refresh: %#v", model)
+			}
+		}
+		if model.ID == remoteModel.ID {
+			foundRemote = true
+			if !reflect.DeepEqual(model, remoteModel) {
+				t.Fatalf("refreshed model = %#v, want %#v", model, remoteModel)
+			}
+		}
+	}
+	if !foundLite || !foundRemote {
+		t.Fatalf("catalog lost Lite or refreshed model: Lite=%v, refreshed=%v", foundLite, foundRemote)
+	}
+
+	const clientID = "test-xai-lite-catalog-refresh"
+	registryRef := GetGlobalRegistry()
+	registryRef.RegisterClient(clientID, "xai", models)
+	t.Cleanup(func() { registryRef.UnregisterClient(clientID) })
+	if !registryRef.ClientSupportsModel(clientID, liteID) {
+		t.Fatal("xAI credential registration lost Lite support after catalog refresh")
+	}
+	if providers := registryRef.GetModelProviders(liteID); !reflect.DeepEqual(providers, []string{"xai"}) {
+		t.Fatalf("Lite providers = %v, want [xai]", providers)
+	}
+}
+
+func TestWithXAIBuiltinsReplacesVideo15LiteWithoutMutatingCatalog(t *testing.T) {
+	const liteID = "grok-imagine-video-1.5-lite"
+	stale := &ModelInfo{ID: liteID, DisplayName: "Stale Lite", SupportedInputModalities: []string{"text"}}
+	duplicate := &ModelInfo{ID: " GROK-IMAGINE-VIDEO-1.5-LITE ", DisplayName: "Duplicate Lite"}
+	custom := &ModelInfo{ID: "custom-xai-model", DisplayName: "Custom model"}
+	input := []*ModelInfo{stale, custom, duplicate}
+	for range 2 {
+		models := WithXAIBuiltins(input)
+		liteCount := 0
+		foundCustom := false
+		for _, model := range models {
+			if strings.EqualFold(strings.TrimSpace(model.ID), liteID) {
+				liteCount++
+				if model.ID != liteID || model.DisplayName != "Grok Imagine Video 1.5 Lite" ||
+					!reflect.DeepEqual(model.SupportedInputModalities, []string{"text", "image"}) {
+					t.Fatalf("Lite builtin did not replace stale metadata: %#v", model)
+				}
+				model.SupportedInputModalities[0] = "mutated"
+			}
+			if model.ID == custom.ID {
+				foundCustom = reflect.DeepEqual(model, custom)
+			}
+		}
+		if liteCount != 1 || !foundCustom {
+			t.Fatalf("Lite count = %d, custom preserved = %v, want 1 and true", liteCount, foundCustom)
+		}
+	}
+	if input[0] != stale || input[1] != custom || input[2] != duplicate ||
+		stale.DisplayName != "Stale Lite" || !reflect.DeepEqual(stale.SupportedInputModalities, []string{"text"}) ||
+		duplicate.ID != " GROK-IMAGINE-VIDEO-1.5-LITE " || duplicate.DisplayName != "Duplicate Lite" {
+		t.Fatal("builtin merge mutated the input catalog")
 	}
 }
 
@@ -316,12 +399,15 @@ func TestValidateModelsCatalog_Meta(t *testing.T) {
 	}
 }
 
-func TestWithCodexBuiltinsIncludesImage25Models(t *testing.T) {
+func TestWithCodexBuiltinsIncludesImage25And26Models(t *testing.T) {
 	models := WithCodexBuiltins(nil)
 	expectedModels := map[string]string{
 		"gpt-image-2.5-flare":    "GPT Image 2.5 Flare",
 		"gpt-image-2.5-sunburst": "GPT Image 2.5 Sunburst",
 		"gpt-image-2.5":          "GPT Image 2.5",
+		"gpt-image-2.6-flare":    "GPT Image 2.6 Flare",
+		"gpt-image-2.6-sunburst": "GPT Image 2.6 Sunburst",
+		"gpt-image-2.6":          "GPT Image 2.6",
 	}
 
 	found := make(map[string]*ModelInfo)
@@ -399,10 +485,10 @@ func TestGetDevinModelsFallback(t *testing.T) {
 				t.Errorf("devin/deepseek-v4-flash OwnedBy = %q, want deepseek", m.OwnedBy)
 			}
 		}
-		if m != nil && m.ID == "devin/deepseek-v4-1-flash" {
+		if m != nil && m.ID == "devin/deepseek-v4-1-flash-1017" {
 			foundDeepSeekV41Flash = true
 			if m.OwnedBy != "deepseek" {
-				t.Errorf("devin/deepseek-v4-1-flash OwnedBy = %q, want deepseek", m.OwnedBy)
+				t.Errorf("devin/deepseek-v4-1-flash-1017 OwnedBy = %q, want deepseek", m.OwnedBy)
 			}
 		}
 	}
@@ -422,7 +508,7 @@ func TestGetDevinModelsFallback(t *testing.T) {
 		t.Error("expected devin/deepseek-v4-flash in GetDevinModels()")
 	}
 	if !foundDeepSeekV41Flash {
-		t.Error("expected devin/deepseek-v4-1-flash in GetDevinModels()")
+		t.Error("expected devin/deepseek-v4-1-flash-1017 in GetDevinModels()")
 	}
 
 	byChannel := GetStaticModelDefinitionsByChannel("devin")

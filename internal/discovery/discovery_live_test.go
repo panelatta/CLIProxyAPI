@@ -71,12 +71,12 @@ func TestAdvertiserAndBrowser_Integration(t *testing.T) {
 		Domain:       DefaultDomain,
 		Port:         54321,
 		Subtypes:     []string{SubtypeResponses},
-		TextRecords:  BuildTXTRecords(DefaultTXTOptions()),
+		TextRecords:  mustBuildTXTRecords(t, DefaultTXTOptions()),
 		Interfaces:   ifaces,
 	}
 
 	adv := NewZeroconfAdvertiser()
-	startCtx, startCancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	startCtx, startCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer startCancel()
 	if err := adv.Start(startCtx, spec); err != nil {
 		t.Skipf("skipping live multicast test: %v", err)
@@ -92,6 +92,11 @@ func TestAdvertiserAndBrowser_Integration(t *testing.T) {
 	browser := NewZeroconfBrowser(ifaces...)
 	results, err := browser.Browse(browseCtx, DefaultServiceType, DefaultDomain)
 	if err != nil {
+		// Some platforms (notably windows/amd64) cannot open mDNS sockets;
+		// the live browse cannot run there, only outside such environments.
+		if strings.Contains(err.Error(), "open mDNS sockets") {
+			t.Skipf("skipping live multicast browse: %v", err)
+		}
 		t.Fatalf("browse failed: %v", err)
 	}
 
@@ -105,11 +110,22 @@ func TestAdvertiserAndBrowser_Integration(t *testing.T) {
 			if res.Product != ProductCPA {
 				t.Errorf("expected product %s, got %s", ProductCPA, res.Product)
 			}
+			osHost := extractCleanHost() + "." + DefaultDomain
+			if strings.EqualFold(res.Host, osHost) {
+				t.Errorf("expected proxy-specific host instead of OS host %q, got %q", osHost, res.Host)
+			}
+			if res.Host != "cpa-livetest-42.local." {
+				t.Errorf("expected advertised host cpa-livetest-42.local., got %q", res.Host)
+			}
 			break
 		}
 	}
 
 	if !found {
 		t.Fatalf("advertised instance CPA-LiveTest-42 was not discovered")
+	}
+
+	if errDirect := verifyDirectHostQueryAndGoodbye(t, ifaces, "cpa-livetest-42.local.", adv.Stop); errDirect != nil {
+		t.Fatalf("direct host query / goodbye verification failed: %v", errDirect)
 	}
 }

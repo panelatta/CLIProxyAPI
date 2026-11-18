@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestClaudeExecutor_AbliterationSearchCacheControl(t *testing.T) {
@@ -60,16 +60,16 @@ func TestClaudeExecutor_AbliterationSearchCacheControl(t *testing.T) {
 				} else if _, errExecute := executor.Execute(ctx, auth, req, opts); errExecute != nil {
 					t.Fatal(errExecute)
 				}
-				if gjson.GetBytes(seenBody, "tools.0.cache_control").Exists() {
+				if ojson.GetBytes(seenBody, "tools.0.cache_control").Exists() {
 					t.Fatalf("search cache marker reached upstream: %s", seenBody)
 				}
-				if gjson.GetBytes(seenBody, "tools.0.max_uses").Int() != 1 || gjson.GetBytes(seenBody, "tools.0.type").String() != "web_search_20250305" {
+				if ojson.GetBytes(seenBody, "tools.0.max_uses").Int() != 1 || ojson.GetBytes(seenBody, "tools.0.type").String() != "web_search_20250305" {
 					t.Fatalf("search tool changed: %s", seenBody)
 				}
-				if gjson.GetBytes(seenBody, "messages.0.content.0.cache_control.type").String() != "ephemeral" {
+				if ojson.GetBytes(seenBody, "messages.0.content.0.cache_control.type").String() != "ephemeral" {
 					t.Fatalf("message cache marker missing: %s", seenBody)
 				}
-				if explicit && gjson.GetBytes(seenBody, "system.0.cache_control.type").String() != "ephemeral" {
+				if explicit && ojson.GetBytes(seenBody, "system.0.cache_control.type").String() != "ephemeral" {
 					t.Fatalf("system cache marker missing: %s", seenBody)
 				}
 			})

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 func TestStripAbliterationSearchCacheControl(t *testing.T) {
@@ -31,12 +31,12 @@ func TestStripAbliterationSearchCacheControl(t *testing.T) {
 				return
 			}
 			for _, path := range []string{"tools.0.cache_control", "tools.2.cache_control"} {
-				if gjson.GetBytes(out, path).Exists() {
+				if ojson.GetBytes(out, path).Exists() {
 					t.Fatalf("unsupported marker remains at %s: %s", path, out)
 				}
 			}
 			for _, path := range []string{"tools.1", "system", "messages", "tools.0.max_uses", "tools.0.type", "tools.0.name"} {
-				if gjson.GetBytes(out, path).Raw != gjson.Get(input, path).Raw {
+				if ojson.GetBytes(out, path).Raw != ojson.Get(input, path).Raw {
 					t.Fatalf("unrelated field changed at %s: %s", path, out)
 				}
 			}

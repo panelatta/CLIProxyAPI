@@ -2,13 +2,14 @@ package openai
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
+	"github.com/MoeForge/moego/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	internalfiles "github.com/router-for-me/CLIProxyAPI/v8/internal/files"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
@@ -16,7 +17,6 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"github.com/tidwall/gjson"
 )
 
 func TestMixedUploadedTextAndPDFPreserveOrderAndBinaryTransport(t *testing.T) {
@@ -49,7 +49,7 @@ func TestMixedUploadedTextAndPDFPreserveOrderAndBinaryTransport(t *testing.T) {
 		if errExpand != nil || len(ids) != 2 {
 			t.Fatalf("ids=%v err=%v", ids, errExpand)
 		}
-		parts := gjson.GetBytes(expanded, prefix)
+		parts := ojson.GetBytes(expanded, prefix)
 		if parts.Get("0.text").String() != "Read both files" || parts.Get("1.type").String() != textType ||
 			parts.Get("1.text").String() != "Contents of uploaded file \"notes.txt\":\n校验码 42\nsecond line" {
 			t.Fatalf("text content lost or reordered: %s", parts.Raw)
@@ -145,13 +145,13 @@ func TestResponsesExpandsUploadedTextFile(t *testing.T) {
 	if executor.calls != 1 {
 		t.Fatalf("executor calls = %d, want 1", executor.calls)
 	}
-	if got := gjson.Get(executor.payload, "input.0.content.0.type").String(); got != "input_text" {
+	if got := ojson.Get(executor.payload, "input.0.content.0.type").String(); got != "input_text" {
 		t.Fatalf("content type = %q, want input_text", got)
 	}
-	if got := gjson.Get(executor.payload, "input.0.content.0.text").String(); got != "Contents of uploaded file \"notes.txt\":\nhello" {
+	if got := ojson.Get(executor.payload, "input.0.content.0.text").String(); got != "Contents of uploaded file \"notes.txt\":\nhello" {
 		t.Fatalf("unexpected uploaded text: %q", got)
 	}
-	if gjson.Get(executor.payload, "input.0.content.0.file_id").Exists() {
+	if ojson.Get(executor.payload, "input.0.content.0.file_id").Exists() {
 		t.Fatalf("unexpected file_id in rewritten payload: %s", executor.payload)
 	}
 	if _, err := store.GetMetadata(record.ID); !errors.Is(err, internalfiles.ErrNotFound) {
@@ -204,13 +204,13 @@ func TestChatCompletionsExpandsUploadedTextFile(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusOK, resp.Body.String())
 	}
-	if got := gjson.Get(executor.payload, "messages.0.content.0.text").String(); got != "Contents of uploaded file \"notes.txt\":\nhello" {
+	if got := ojson.Get(executor.payload, "messages.0.content.0.text").String(); got != "Contents of uploaded file \"notes.txt\":\nhello" {
 		t.Fatalf("unexpected uploaded text: %q", got)
 	}
-	if got := gjson.Get(executor.payload, "messages.0.content.0.type").String(); got != "text" {
+	if got := ojson.Get(executor.payload, "messages.0.content.0.type").String(); got != "text" {
 		t.Fatalf("content type = %q, want text", got)
 	}
-	if gjson.Get(executor.payload, "messages.0.content.0.file.file_id").Exists() {
+	if ojson.Get(executor.payload, "messages.0.content.0.file.file_id").Exists() {
 		t.Fatalf("unexpected file_id in rewritten payload: %s", executor.payload)
 	}
 	if _, err := store.GetMetadata(record.ID); !errors.Is(err, internalfiles.ErrNotFound) {
@@ -244,10 +244,10 @@ func TestChatCompletionsConvertsResponsesFilePayloadToChatFilePayload(t *testing
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body=%s", resp.Code, http.StatusOK, resp.Body.String())
 	}
-	if got := gjson.Get(executor.payload, "messages.0.content.0.type").String(); got != "text" {
+	if got := ojson.Get(executor.payload, "messages.0.content.0.type").String(); got != "text" {
 		t.Fatalf("content type = %q, want %q", got, "text")
 	}
-	if got := gjson.Get(executor.payload, "messages.0.content.0.text").String(); got != "Contents of uploaded file \"notes.txt\":\nhello" {
+	if got := ojson.Get(executor.payload, "messages.0.content.0.text").String(); got != "Contents of uploaded file \"notes.txt\":\nhello" {
 		t.Fatalf("unexpected uploaded text: %q", got)
 	}
 	if _, err := store.GetMetadata(record.ID); !errors.Is(err, internalfiles.ErrNotFound) {

@@ -1,9 +1,9 @@
 package usage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/MoeForge/moego/json"
 	"os"
 	"path/filepath"
 	"sync"

@@ -460,3 +460,33 @@ func TestReRegisterClient_ClearsStaleProbedCapabilitiesWhenNoOtherClientSupports
 		t.Fatalf("GetModelsForClient(A): expected SupportsWebSearch=false, got %+v", clientAModels)
 	}
 }
+
+func TestCatalogRefreshPreservesLocalImageModels(t *testing.T) {
+	original := getModels()
+	t.Cleanup(func() {
+		modelsCatalogStore.mu.Lock()
+		modelsCatalogStore.data = original
+		modelsCatalogStore.mu.Unlock()
+	})
+	payload := []byte(`{"codex-plus":[{"id":"gpt-6.2-sol","object":"model","type":"codex"}]}`)
+	for range 2 {
+		if _, err := publishCatalogBytes(payload); err != nil {
+			t.Fatal(err)
+		}
+		catalog := getModels()
+		for name, models := range map[string][]*ModelInfo{"free": catalog.CodexFree, "team": catalog.CodexTeam, "plus": catalog.CodexPlus, "pro": catalog.CodexPro} {
+			counts := map[string]int{}
+			for _, model := range models {
+				counts[model.ID]++
+			}
+			for _, id := range []string{"gpt-image-1", "gpt-image-2"} {
+				if counts[id] != 1 {
+					t.Fatalf("%s: model %s count = %d, want 1", name, id, counts[id])
+				}
+			}
+			if name == "plus" && counts["gpt-6.2-sol"] != 1 {
+				t.Fatal("remote GPT-6.2 model was lost")
+			}
+		}
+	}
+}
