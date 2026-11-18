@@ -18,7 +18,7 @@ import (
 )
 
 func TestPayloadReplaceCodexTransports(t *testing.T) {
-	for _, selector := range []string{"user", "developer", "paths"} {
+	for _, selector := range []string{"user", "developer", "system", "paths"} {
 		role := selector
 		if selector == "paths" {
 			role = "user"
@@ -78,11 +78,7 @@ func TestPayloadReplaceCodexTransports(t *testing.T) {
 					}
 					auth := &cliproxyauth.Auth{ID: t.Name(), Provider: "codex", Attributes: map[string]string{"api_key": "test", "base_url": server.URL, "plan_type": "pro"}}
 					doc := ojson.NewDocString(`{"input":[{"role":"user","content":[{"type":"input_text","text":"hero"}]}]}`)
-					sourceRole := role
-					if role == "developer" {
-						sourceRole = "system" // Codex converts system to developer before payload rules.
-					}
-					if errSet := doc.Set("input.0.role", sourceRole); errSet != nil {
+					if errSet := doc.Set("input.0.role", role); errSet != nil {
 						t.Fatal(errSet)
 					}
 					req := cliproxyexecutor.Request{Model: "gpt-5.4", Payload: doc.Bytes()}
@@ -101,6 +97,13 @@ func TestPayloadReplaceCodexTransports(t *testing.T) {
 						t.Fatal(errExecute)
 					}
 					body := <-captured
+					if role == "system" {
+						// The local Responses compatibility layer promotes system text to instructions.
+						if ojson.GetBytes(body, "instructions").String() != "hero!" || len(ojson.GetBytes(body, "input").Array()) != 0 {
+							t.Fatalf("system replacement missing, repeated, or moved into a fabricated message: %s", body)
+						}
+						return
+					}
 					if got := ojson.GetBytes(body, "input.0.content.0.text").String(); got != "hero!" {
 						t.Fatalf("replacement missing or repeated: %s", body)
 					}
