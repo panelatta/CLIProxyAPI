@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -178,21 +179,32 @@ func TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559(t *testing.T) {
 	service.registerConfigAPIKeyAuths(ctx, service.currentConfig())
 
 	finalPrefixModel := fmt.Sprintf("pfx-%d/gpt-6-astra", iterations-1)
-	if !reg.ClientSupportsModel(authID, finalPrefixModel) {
-		t.Fatalf("expected auth %s to support final prefixed model %q", authID, finalPrefixModel)
-	}
-
 	finalCompatAlias := fmt.Sprintf("alias-%d", iterations-1)
-	foundCompatModel := false
-	for _, a := range service.coreManager.List() {
-		if a != nil && reg.ClientSupportsModel(a.ID, finalCompatAlias) {
-			foundCompatModel = true
-			break
+	// Management saves enqueue reloads; wait for both final publications rather
+	// than observing an intermediate registry state after the HTTP handlers return.
+	finalModelsPublished := func() bool {
+		if !reg.ClientSupportsModel(authID, finalPrefixModel) {
+			return false
+		}
+		for _, auth := range service.coreManager.List() {
+			if auth != nil && reg.ClientSupportsModel(auth.ID, finalCompatAlias) {
+				return true
+			}
+		}
+		return false
+	}
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for !finalModelsPublished() {
+		select {
+		case <-deadline.C:
+			t.Fatalf("final models were not published: auth %s model %q, compatibility alias %q", authID, finalPrefixModel, finalCompatAlias)
+		case <-tick.C:
 		}
 	}
-	if !foundCompatModel {
-		t.Fatalf("expected registered openai-compatibility auth to support final model %q", finalCompatAlias)
-	}
+
 }
 
 func TestPutOpenAICompatConcurrentWithConfigReloadAndAuthUpdate_Issue6559(t *testing.T) {
