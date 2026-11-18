@@ -881,7 +881,7 @@ func TestCodexExecutorExecuteStream_ClosedBeforeCompletedReturnsError(t *testing
 	}))
 	defer server.Close()
 
-	executor := NewCodexExecutor(&config.Config{})
+	executor := NewCodexExecutor(codexBufferingConfig(true))
 	auth := &cliproxyauth.Auth{Attributes: map[string]string{
 		"base_url": server.URL,
 		"api_key":  "test",

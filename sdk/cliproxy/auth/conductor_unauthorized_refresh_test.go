@@ -1898,15 +1898,15 @@ func TestManager_ForceRefreshAuth_SignInRequiredDoesNotReadmitDeadCredential_Iss
 		t.Fatalf("RejectedAccessToken = %q, want %q preserved", afterForce.RejectedAccessToken, "revoked-access-token")
 	}
 
-	// Next inference must fail with 503 auth_unavailable without attempting upstream Execute on the dead credential.
+	// Next inference must expose a non-retryable terminal rejection without executing the dead credential.
 	execCallsBefore := len(executor.ExecuteCalls())
 	_, errAfterForce := m.Execute(ctx, []string{"codex"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{})
 	if errAfterForce == nil {
 		t.Fatal("expected Execute after ForceRefreshAuth to fail with auth_unavailable")
 	}
 	var authUnavailableErr *Error
-	if !errors.As(errAfterForce, &authUnavailableErr) || authUnavailableErr == nil || authUnavailableErr.StatusCode() != http.StatusServiceUnavailable || authUnavailableErr.Code != "auth_unavailable" {
-		t.Fatalf("Execute after ForceRefreshAuth error = %#v, want 503 auth_unavailable", errAfterForce)
+	if !errors.As(errAfterForce, &authUnavailableErr) || authUnavailableErr == nil || authUnavailableErr.StatusCode() != http.StatusForbidden || authUnavailableErr.Code != "auth_unavailable" || !IsTerminalAuthError(errAfterForce) || authUnavailableErr.Retryable {
+		t.Fatalf("Execute after ForceRefreshAuth error = %#v, want terminal 403 auth_unavailable", errAfterForce)
 	}
 	if gotCalls := len(executor.ExecuteCalls()); gotCalls != execCallsBefore {
 		t.Fatalf("dead credential was selected for inference after ForceRefreshAuth (%d -> %d execute calls)", execCallsBefore, gotCalls)

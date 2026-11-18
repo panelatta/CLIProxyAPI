@@ -96,7 +96,7 @@ func TestConvertSystemRoleToDeveloper_BasicConversion(t *testing.T) {
 	}
 }
 
-func TestConvertOpenAIResponsesRequestToCodex_LiftsDeveloperMessageToInstructions(t *testing.T) {
+func TestConvertOpenAIResponsesRequestToCodex_PreservesDeveloperMessageForPayloadRules(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.5",
 		"input": [
@@ -117,11 +117,11 @@ func TestConvertOpenAIResponsesRequestToCodex_LiftsDeveloperMessageToInstruction
 	output, _ := ConvertOpenAIResponsesRequestToCodex("gpt-5.5", inputJSON, false)
 	outputStr := string(output)
 
-	if instructions := ojson.Get(outputStr, "instructions").String(); instructions != "Use web search when useful." {
-		t.Fatalf("Expected developer instructions to be lifted, got %q: %s", instructions, outputStr)
+	if ojson.Get(outputStr, "instructions").Exists() {
+		t.Fatalf("developer messages must not replace top-level instructions: %s", outputStr)
 	}
-	if role := ojson.Get(outputStr, "input.0.role").String(); role != "user" {
-		t.Fatalf("Expected only user input to remain, got role %q: %s", role, outputStr)
+	if ojson.Get(outputStr, "input.0.role").String() != "developer" || ojson.Get(outputStr, "input.0.content.0.text").String() != "Use web search when useful." || ojson.Get(outputStr, "input.1.role").String() != "user" {
+		t.Fatalf("developer/user input was not preserved: %s", outputStr)
 	}
 	if got := ojson.Get(outputStr, "tools.0.type").String(); got != "web_search" {
 		t.Fatalf("Expected hosted web_search tool to be preserved, got %q: %s", got, outputStr)

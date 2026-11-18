@@ -240,6 +240,8 @@ func stripPromptCacheBreakpointFromContent(content ojson.Result) ([]byte, bool) 
 	return translatorcommon.JoinRawArray(rebuiltParts), true
 }
 
+// Only system messages belong in top-level instructions. Developer messages
+// carry turn-local and compaction content and must remain visible to payload rules.
 func liftCodexInstructionMessagesDoc(rawJSON []byte, input ojson.Result, ensureDoc func() *ojson.Doc) ojson.Result {
 	if !input.IsArray() {
 		return input
@@ -252,7 +254,7 @@ func liftCodexInstructionMessagesDoc(rawJSON []byte, input ojson.Result, ensureD
 	changed := false
 	for _, item := range input.Array() {
 		role, kind := item.Get("role").String(), item.Get("type").String()
-		if (kind == "" || kind == "message") && (role == "system" || role == "developer") {
+		if (kind == "" || kind == "message") && role == "system" {
 			if text := codexInstructionTextFromMessage(item); text != "" {
 				instructions = append(instructions, text)
 				changed = true
